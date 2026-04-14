@@ -87,7 +87,7 @@ KIDS_SWEEP  := demos/embodied_scene/bench_kids_sweep
 .PHONY: bench-av-keepalive bench-av-30s-keepalive
 .PHONY: bench-graph bench-wmma bench-tiled
 
-all: engine validate latency server demos
+all: engine validate latency server demos $(KIDS_SWEEP)
 
 engine:   memory_engine
 validate: validate
@@ -466,6 +466,6 @@ bench-tiled: bench_tiled
 clean:
 	rm -f src/*.o
 	rm -f memory_engine validate latency_bench engine_server bench_tiled
-	rm -f $(DEMO_BINS)
+	rm -f $(DEMO_BINS) $(KIDS_SWEEP)
 	rm -f tests/run_tests
 	rm -rf results/

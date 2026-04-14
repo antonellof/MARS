@@ -125,6 +125,13 @@ bench-kids-mars: $(KIDS_SWEEP)
 	@mkdir -p results
 	$(KIDS_SWEEP) results/kids_ball_mars_sweep.json
 
+# Coarse grid over episode_same_boost at fixed N; writes step_*.json + SUMMARY under dir
+bench-kids-iterate: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_default
+	$(KIDS_SWEEP) --boost-grid 0,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.5 \
+		--iterate-n 10000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_default
+
 bench-kids-export: $(KIDS_SWEEP)
 	@mkdir -p results
 	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768

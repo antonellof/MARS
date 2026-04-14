@@ -12,6 +12,10 @@
 //    ./bench_kids_sweep [out.json]
 //    ./bench_kids_sweep --dump-corpus path.bin [--dump-n 5000] [out.json]
 //
+//  Iteration / coarse grid (saves one JSON per boost + SUMMARY):
+//    ./bench_kids_sweep --boost-grid 0,0.15,0.25,0.35,0.5 --iterate-n 10000 \
+//        --iterate-steps-dir results/iteration_steps/my_run --iterate-probes 256
+//
 //  Binary corpus format (little-endian) for FAISS baseline scripts:
 //    uint32 magic 'KIDS' (0x5344494b)
 //    uint32 version (=1)
@@ -102,6 +106,323 @@ struct BenchVariant {
     float             episode_same_boost = 0.0f;
 };
 
+std::vector<float> parse_boost_list(const char* s) {
+    std::vector<float> v;
+    if (!s || !*s) return v;
+    const char* p = s;
+    while (*p) {
+        char* endp = nullptr;
+        float x = std::strtof(p, &endp);
+        if (endp == p) break;
+        v.push_back(x);
+        if (*endp == ',') {
+            ++endp;
+        } else if (*endp == '\0') {
+            break;
+        } else {
+            break;
+        }
+        p = endp;
+    }
+    return v;
+}
+
+// Returns 0 on success. Writes step_boost_<milli>.json per boost and SUMMARY.{json,md}.
+int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int32_t grid_probes,
+                           const char* steps_dir, int32_t dim, int32_t top_k, int32_t max_results_host,
+                           int32_t query_ctx_max_k, uint32_t corpus_seed) {
+    if (boosts.empty()) {
+        std::fprintf(stderr, "--boost-grid: empty list\n");
+        return 1;
+    }
+    {
+        std::string cmd = std::string("mkdir -p \"") + steps_dir + "\"";
+        if (std::system(cmd.c_str()) != 0) {
+            std::fprintf(stderr, "failed: %s\n", cmd.c_str());
+            return 1;
+        }
+    }
+
+    auto t_build0 = std::chrono::high_resolution_clock::now();
+    EmbodiedKidsBallCorpus corp = EmbodiedKidsBallCorpus::make(grid_n, dim, corpus_seed);
+    MemoryGraph& g = corp.graph;
+    g.build_nsn_edges(6, 0.15);
+    auto t_build1 = std::chrono::high_resolution_clock::now();
+    double build_ms = std::chrono::duration<double, std::milli>(t_build1 - t_build0).count();
+
+    std::vector<int32_t> image_nodes;
+    for (int32_t i = 0; i < g.num_nodes; ++i)
+        if (g.modalities[i] == MOD_IMAGE)
+            image_nodes.push_back(i);
+    if (image_nodes.empty()) {
+        std::fprintf(stderr, "No IMAGE nodes\n");
+        return 1;
+    }
+
+    HostEpisodeCSR ep_csr = build_episode_csr(corp.episode_ids, g.num_nodes);
+    DeviceMemoryGraph dg = upload_to_device(g);
+    upload_episode_ids(dg, corp.episode_ids.data(), g.num_nodes);
+    upload_episode_csr(dg, ep_csr);
+    QueryContext ctx = create_query_context(g.num_nodes, dim, query_ctx_max_k);
+
+    struct StepRec {
+        float   boost = 0;
+        std::string file;
+        double  wall_p99 = 0;
+        double  kern_p99 = 0;
+        double  hit_c = 0;
+        double  hit_t15 = 0;
+        double  score = 0;
+    };
+    std::vector<StepRec> steps;
+    steps.reserve(boosts.size());
+
+    for (float boost : boosts) {
+        RetrievalConfig cfg;
+        cfg.top_k                = top_k;
+        cfg.max_results_returned = max_results_host;
+        cfg.bfs_max_hops         = 2;
+        cfg.time_decay_lambda    = 8e-6f;
+        cfg.bfs_score_decay      = 0.55f;
+        cfg.modality_filter      = -1;
+        cfg.retrieval_scope      = RetrievalScope::Global;
+        cfg.episode_same_boost   = boost;
+        cfg.query_episode_member_begin = 0;
+        cfg.query_episode_member_count = 0;
+
+        std::mt19937 rng(uint32_t(grid_n) ^ (uint32_t)(boost * 10000.f) ^ 0xB00Bu);
+        std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
+        std::vector<double> wall_ms, kern_ms;
+        wall_ms.reserve(size_t(grid_probes));
+        kern_ms.reserve(size_t(grid_probes));
+        int32_t hits_compact = 0;
+        int32_t hits_top15   = 0;
+
+        for (int32_t p = 0; p < grid_probes; ++p) {
+            const int32_t node = image_nodes[pick(rng)];
+            const float* qemb  = &g.embeddings[size_t(node) * dim];
+            float qts = g.timestamps[node] + float(p) * 0.001f;
+            const int32_t ep = corp.episode_ids[node];
+            cfg.query_episode_id = ep;
+
+            cudaDeviceSynchronize();
+            auto t0 = std::chrono::high_resolution_clock::now();
+            RetrievalStats stats;
+            auto res = query_memory_fast(dg, ctx, qemb, qts, cfg, stats);
+            cudaDeviceSynchronize();
+            auto t1 = std::chrono::high_resolution_clock::now();
+            wall_ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+            kern_ms.push_back(double(stats.gpu_ms_total));
+            const int32_t wfull = static_cast<int32_t>(res.size());
+            if (episode_cross_modal_hit(res, ep, corp.episode_ids, wfull))
+                ++hits_compact;
+            if (episode_cross_modal_hit(res, ep, corp.episode_ids, top_k))
+                ++hits_top15;
+        }
+
+        StepRec rec;
+        rec.boost    = boost;
+        rec.wall_p99 = percentile_p99(wall_ms);
+        rec.kern_p99 = percentile_p99(kern_ms);
+        rec.hit_c    = grid_probes > 0 ? double(hits_compact) / double(grid_probes) : 0.0;
+        rec.hit_t15  = grid_probes > 0 ? double(hits_top15) / double(grid_probes) : 0.0;
+        rec.score    = 2.0 * rec.hit_t15 + rec.hit_c;
+
+        char fname[512];
+        std::snprintf(fname, sizeof(fname), "%s/step_global_boost_%d.json",
+                      steps_dir, (int)std::lround(double(boost) * 1000.0));
+        rec.file = fname;
+        FILE* fo = std::fopen(fname, "w");
+        if (!fo) {
+            std::perror(fname);
+            destroy_query_context(ctx);
+            free_device(dg);
+            return 1;
+        }
+        std::fprintf(fo, "{\n");
+        std::fprintf(fo, "  \"step\": \"global_episode_boost\",\n");
+        std::fprintf(fo, "  \"episode_same_boost\": %.6f,\n", double(boost));
+        std::fprintf(fo, "  \"N\": %d,\n", grid_n);
+        std::fprintf(fo, "  \"num_probes\": %d,\n", grid_probes);
+        std::fprintf(fo, "  \"build_ms\": %.3f,\n", build_ms);
+        std::fprintf(fo, "  \"wall_p99_ms\": %.4f,\n", rec.wall_p99);
+        std::fprintf(fo, "  \"kernel_p99_ms\": %.4f,\n", rec.kern_p99);
+        std::fprintf(fo, "  \"episode_cross_modal_hit_rate_compact\": %.6f,\n", rec.hit_c);
+        std::fprintf(fo, "  \"episode_cross_modal_hit_rate_top15\": %.6f,\n", rec.hit_t15);
+        std::fprintf(fo, "  \"composite_score\": %.6f\n", rec.score);
+        std::fprintf(fo, "}\n");
+        std::fclose(fo);
+        steps.push_back(rec);
+        std::fprintf(stderr, "[iterate] boost=%.3f -> score=%.4f wall_p99=%.3f kern_p99=%.3f "
+                             "hit_c=%.3f hit_t15=%.3f -> %s\n",
+                     double(boost), rec.score, rec.wall_p99, rec.kern_p99, rec.hit_c, rec.hit_t15, fname);
+    }
+
+    // Episode-scoped reference (same corpus / ctx)
+    {
+        RetrievalConfig cfg;
+        cfg.top_k                = top_k;
+        cfg.max_results_returned = max_results_host;
+        cfg.bfs_max_hops         = 2;
+        cfg.time_decay_lambda    = 8e-6f;
+        cfg.bfs_score_decay      = 0.55f;
+        cfg.modality_filter      = -1;
+        cfg.retrieval_scope      = RetrievalScope::EpisodeScoped;
+        cfg.episode_same_boost   = 0.0f;
+
+        std::mt19937 rng(uint32_t(grid_n) ^ 0x5C0Pu);
+        std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
+        std::vector<double> wall_ms, kern_ms;
+        wall_ms.reserve(size_t(grid_probes));
+        kern_ms.reserve(size_t(grid_probes));
+        int32_t hits_compact = 0;
+        int32_t hits_top15   = 0;
+
+        for (int32_t p = 0; p < grid_probes; ++p) {
+            const int32_t node = image_nodes[pick(rng)];
+            const float* qemb  = &g.embeddings[size_t(node) * dim];
+            float qts = g.timestamps[node] + float(p) * 0.001f;
+            const int32_t ep = corp.episode_ids[node];
+            cfg.query_episode_id = ep;
+            cfg.query_episode_member_begin = ep_csr.ep_csr_offsets[static_cast<size_t>(ep)];
+            cfg.query_episode_member_count =
+                ep_csr.ep_csr_offsets[static_cast<size_t>(ep) + 1u] -
+                ep_csr.ep_csr_offsets[static_cast<size_t>(ep)];
+
+            cudaDeviceSynchronize();
+            auto t0 = std::chrono::high_resolution_clock::now();
+            RetrievalStats stats;
+            auto res = query_memory_fast(dg, ctx, qemb, qts, cfg, stats);
+            cudaDeviceSynchronize();
+            auto t1 = std::chrono::high_resolution_clock::now();
+            wall_ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+            kern_ms.push_back(double(stats.gpu_ms_total));
+            const int32_t wfull = static_cast<int32_t>(res.size());
+            if (episode_cross_modal_hit(res, ep, corp.episode_ids, wfull))
+                ++hits_compact;
+            if (episode_cross_modal_hit(res, ep, corp.episode_ids, top_k))
+                ++hits_top15;
+        }
+
+        StepRec rec;
+        rec.boost    = -1.0f;
+        rec.wall_p99 = percentile_p99(wall_ms);
+        rec.kern_p99 = percentile_p99(kern_ms);
+        rec.hit_c    = grid_probes > 0 ? double(hits_compact) / double(grid_probes) : 0.0;
+        rec.hit_t15  = grid_probes > 0 ? double(hits_top15) / double(grid_probes) : 0.0;
+        rec.score    = 2.0 * rec.hit_t15 + rec.hit_c;
+
+        char fname[512];
+        std::snprintf(fname, sizeof(fname), "%s/step_episode_scoped.json", steps_dir);
+        rec.file = fname;
+        FILE* fo = std::fopen(fname, "w");
+        if (!fo) {
+            std::perror(fname);
+            destroy_query_context(ctx);
+            free_device(dg);
+            return 1;
+        }
+        std::fprintf(fo, "{\n");
+        std::fprintf(fo, "  \"step\": \"episode_scoped_no_bfs\",\n");
+        std::fprintf(fo, "  \"N\": %d,\n", grid_n);
+        std::fprintf(fo, "  \"num_probes\": %d,\n", grid_probes);
+        std::fprintf(fo, "  \"build_ms\": %.3f,\n", build_ms);
+        std::fprintf(fo, "  \"wall_p99_ms\": %.4f,\n", rec.wall_p99);
+        std::fprintf(fo, "  \"kernel_p99_ms\": %.4f,\n", rec.kern_p99);
+        std::fprintf(fo, "  \"episode_cross_modal_hit_rate_compact\": %.6f,\n", rec.hit_c);
+        std::fprintf(fo, "  \"episode_cross_modal_hit_rate_top15\": %.6f,\n", rec.hit_t15);
+        std::fprintf(fo, "  \"composite_score\": %.6f,\n", rec.score);
+        std::fprintf(fo, "  \"note\": \"Different retrieval contract: rank within episode members only.\"\n");
+        std::fprintf(fo, "}\n");
+        std::fclose(fo);
+        steps.push_back(rec);
+        std::fprintf(stderr, "[iterate] episode_scoped -> score=%.4f wall_p99=%.3f -> %s\n",
+                     rec.score, rec.wall_p99, fname);
+    }
+
+    destroy_query_context(ctx);
+    free_device(dg);
+
+    size_t best_i = 0;
+    double best_score = -1.0;
+    for (size_t i = 0; i < steps.size(); ++i) {
+        if (steps[i].boost < 0.f) continue;
+        if (steps[i].score > best_score) {
+            best_score = steps[i].score;
+            best_i     = i;
+        }
+    }
+
+    const StepRec* scoped = nullptr;
+    for (size_t i = 0; i < steps.size(); ++i) {
+        if (steps[i].boost < 0.f) {
+            scoped = &steps[i];
+            break;
+        }
+    }
+
+    char sum_path[640];
+    std::snprintf(sum_path, sizeof(sum_path), "%s/SUMMARY.json", steps_dir);
+    FILE* fs = std::fopen(sum_path, "w");
+    if (!fs) {
+        std::perror(sum_path);
+        return 1;
+    }
+    std::fprintf(fs, "{\n");
+    std::fprintf(fs, "  \"tool\": \"mars-kids-boost-iterate\",\n");
+    std::fprintf(fs, "  \"version\": \"1.0\",\n");
+    std::fprintf(fs, "  \"criterion\": \"maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)\",\n");
+    std::fprintf(fs, "  \"best_global_episode_same_boost\": %.6f,\n", double(steps[best_i].boost));
+    std::fprintf(fs, "  \"best_global_composite_score\": %.6f,\n", steps[best_i].score);
+    std::fprintf(fs, "  \"best_global_step_file\": \"%s\",\n", steps[best_i].file.c_str());
+    if (scoped) {
+        std::fprintf(fs, "  \"episode_scoped_composite_score\": %.6f,\n", scoped->score);
+        std::fprintf(fs, "  \"episode_scoped_wall_p99_ms\": %.4f,\n", scoped->wall_p99);
+        std::fprintf(fs, "  \"episode_scoped_step_file\": \"%s\",\n", scoped->file.c_str());
+    }
+    std::fprintf(fs, "  \"steps\": [\n");
+    for (size_t i = 0; i < steps.size(); ++i) {
+        std::fprintf(fs,
+            "    {\"boost\":%.6f,\"file\":\"%s\",\"composite_score\":%.6f,\"wall_p99_ms\":%.4f,"
+            "\"hit_top15\":%.6f,\"hit_compact\":%.6f}%s\n",
+            double(steps[i].boost), steps[i].file.c_str(), steps[i].score,
+            steps[i].wall_p99, steps[i].hit_t15, steps[i].hit_c,
+            (i + 1 < steps.size()) ? "," : "");
+    }
+    std::fprintf(fs, "  ]\n}\n");
+    std::fclose(fs);
+
+    std::snprintf(sum_path, sizeof(sum_path), "%s/SUMMARY.md", steps_dir);
+    fs = std::fopen(sum_path, "w");
+    if (fs) {
+        std::fprintf(fs, "# Kids-ball iteration summary (N=%d)\n\n", grid_n);
+        std::fprintf(fs, "**Criterion:** maximize `2 * hit_top15 + hit_compact` over **global** episode boosts.\n\n");
+        std::fprintf(fs, "## Best global boost\n\n");
+        std::fprintf(fs, "- **episode_same_boost:** %.4f\n", double(steps[best_i].boost));
+        std::fprintf(fs, "- **composite_score:** %.4f\n", steps[best_i].score);
+        std::fprintf(fs, "- **wall p99 (ms):** %.4f\n", steps[best_i].wall_p99);
+        std::fprintf(fs, "- **Artifact:** `%s`\n\n", steps[best_i].file.c_str());
+        if (scoped) {
+            std::fprintf(fs, "## Episode-scoped reference (different contract)\n\n");
+            std::fprintf(fs, "- **composite_score:** %.4f (often ~3.0 when both hits saturate)\n", scoped->score);
+            std::fprintf(fs, "- **wall p99 (ms):** %.4f\n", scoped->wall_p99);
+            std::fprintf(fs, "- **Artifact:** `%s`\n\n", scoped->file.c_str());
+            if (scoped->wall_p99 < steps[best_i].wall_p99 * 0.85)
+                std::fprintf(fs, "**Latency:** episode-scoped is materially faster at this N (subset similarity).\n\n");
+        }
+        std::fprintf(fs, "## Recommendation\n\n");
+        std::fprintf(fs, "For **open-world** global memory, set `RetrievalConfig::episode_same_boost` to **%.3f** "
+                         "if optimizing the stated composite at N=%d.\n",
+                     double(steps[best_i].boost), grid_n);
+        std::fprintf(fs, "For **session-local** UX metrics, prefer `RetrievalScope::EpisodeScoped` and label "
+                         "benchmarks accordingly.\n");
+        std::fclose(fs);
+    }
+
+    std::fprintf(stderr, "Wrote SUMMARY under %s\n", steps_dir);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -116,6 +437,10 @@ int main(int argc, char** argv) {
     const char* out_path = "results/kids_ball_mars_sweep.json";
     const char* dump_path = nullptr;
     int32_t      dump_n    = -1;
+    const char* boost_grid       = nullptr;
+    const char* iterate_steps_dir = nullptr;
+    int32_t      iterate_n       = 10000;
+    int32_t      iterate_probes  = NUM_PROBES;
 
     const BenchVariant variants[] = {
         {"global_baseline", RetrievalScope::Global, 0.0f},
@@ -140,12 +465,34 @@ int main(int argc, char** argv) {
             dump_path = argv[++i];
         } else if (std::strcmp(argv[i], "--dump-n") == 0 && i + 1 < argc) {
             dump_n = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--boost-grid") == 0 && i + 1 < argc) {
+            boost_grid = argv[++i];
+        } else if (std::strcmp(argv[i], "--iterate-steps-dir") == 0 && i + 1 < argc) {
+            iterate_steps_dir = argv[++i];
+        } else if (std::strcmp(argv[i], "--iterate-n") == 0 && i + 1 < argc) {
+            iterate_n = std::max(10, std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--iterate-probes") == 0 && i + 1 < argc) {
+            iterate_probes = std::max(16, std::atoi(argv[++i]));
         } else if (argv[i][0] != '-') {
             out_path = argv[i];
         }
     }
     if (dump_path && dump_n < 0)
         dump_n = n_list.back();
+
+    if (boost_grid) {
+        std::vector<float> bl = parse_boost_list(boost_grid);
+        if (bl.empty()) {
+            std::fprintf(stderr,
+                         "bench_kids_sweep: --boost-grid needs comma-separated floats, e.g. "
+                         "0,0.15,0.25,0.35\n");
+            return 1;
+        }
+        const char* sd =
+            iterate_steps_dir ? iterate_steps_dir : "results/iteration_steps/latest";
+        return run_boost_iterate_mode(bl, iterate_n, iterate_probes, sd, DIM, TOP_K,
+                                      MAX_RESULTS_HOST, QUERY_CTX_MAX_K, CORPUS_SEED);
+    }
 
     std::vector<std::vector<SweepRow>> rows_by_variant;
     rows_by_variant.resize(sizeof(variants) / sizeof(variants[0]));

@@ -25,6 +25,15 @@ mkdir -p results/iteration_steps/run_local
 
 Convenience: `make bench-kids-iterate`, `make bench-kids-iterate-refine`, `make bench-kids-iterate-refine-latency`, `make bench-kids-iterate-refine-micro`.
 
+**Larger corpora:** the default **0.24** was chosen at **N=10k**. Optimal `episode_same_boost` can shift as the NSN and candidate pool grow. Re-run the same micro-grid at **20k** / **50k**:
+
+```bash
+make bench-kids-iterate-refine-micro-20k
+make bench-kids-iterate-refine-micro-50k
+```
+
+Or any N: `./demos/embodied_scene/bench_kids_sweep --boost-grid … --iterate-n 50000 --iterate-steps-dir results/iteration_steps/my_50k_run`. `SUMMARY.json` records `iterate_n`, `iterate_probes`, and `corpus_seed`.
+
 - **`step_global_boost_<milli>.json`** — one file per boost value (milli = round(boost × 1000)).
 - **`step_episode_scoped.json`** — reference run (different retrieval contract).
 - **`SUMMARY.json` / `SUMMARY.md`** — best global boost under criterion  

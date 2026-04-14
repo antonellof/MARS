@@ -382,7 +382,10 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
     }
     std::fprintf(fs, "{\n");
     std::fprintf(fs, "  \"tool\": \"mars-kids-boost-iterate\",\n");
-    std::fprintf(fs, "  \"version\": \"1.1\",\n");
+    std::fprintf(fs, "  \"version\": \"1.2\",\n");
+    std::fprintf(fs, "  \"iterate_n\": %d,\n", grid_n);
+    std::fprintf(fs, "  \"iterate_probes\": %d,\n", grid_probes);
+    std::fprintf(fs, "  \"corpus_seed\": %u,\n", corpus_seed);
     if (wall_ms_penalty > 0.0) {
         std::fprintf(fs,
             "  \"criterion\": \"maximize ranking_score = 2*hit_top15 + hit_compact - %.6f * wall_p99_ms "

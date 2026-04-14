@@ -153,6 +153,19 @@ bench-kids-iterate-refine-micro: $(KIDS_SWEEP)
 		--iterate-n 10000 --iterate-probes 256 \
 		--iterate-steps-dir results/iteration_steps/make_refine_micro
 
+# Same micro-grid at larger N (matches multi-N sweep corpus sizes; run on GPU)
+bench-kids-iterate-refine-micro-20k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_20k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 20000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_20k
+
+bench-kids-iterate-refine-micro-50k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_50k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 50000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_50k
+
 bench-kids-export: $(KIDS_SWEEP)
 	@mkdir -p results
 	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768

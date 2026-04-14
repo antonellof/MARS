@@ -16,6 +16,8 @@
 //    T6  Cross-modal bridges: every node has at least one neighbor in
 //        every other modality
 //    T7  Average degree is within the expected bound
+//    T8–T17 persistence, budget, streaming
+//    T18 Embodied kids-ball corpus: CSR valid after NSN build
 //
 //  Build:  g++ -std=c++17 -Iinclude -o tests/run_tests \
 //              src/memory_graph.cpp tests/test_memory_graph.cpp
@@ -405,6 +407,30 @@ void T17_streaming_flush_preserves_bridges() {
     PASS();
 }
 
+void T18_embodied_kids_ball_csr() {
+    EmbodiedKidsBallCorpus c = EmbodiedKidsBallCorpus::make(220, 96, 2026u);
+    CHECK(c.graph.num_nodes == 220, "wrong N");
+    CHECK(int32_t(c.episode_ids.size()) == 220, "episode_ids size");
+    CHECK(c.graph.modalities.size() == 220u, "modalities size");
+    c.graph.build_nsn_edges(6, 0.15);
+    for (int32_t i = 0; i < c.graph.num_nodes; ++i) {
+        CHECK(c.graph.row_offsets[i] <= c.graph.row_offsets[i + 1],
+              "row_offsets not monotone");
+    }
+    CHECK(c.graph.row_offsets[c.graph.num_nodes] == c.graph.num_edges,
+          "row_offsets[N] != num_edges");
+    for (int32_t i = 0; i < c.graph.num_nodes; ++i) {
+        int32_t prev = -1;
+        for (int32_t j = c.graph.row_offsets[i]; j < c.graph.row_offsets[i + 1]; ++j) {
+            int32_t n = c.graph.col_indices[j];
+            CHECK(n >= 0 && n < c.graph.num_nodes, "neighbor out of range");
+            CHECK(n > prev, "neighbors not strictly sorted");
+            prev = n;
+        }
+    }
+    PASS();
+}
+
 // ─── Test runner ────────────────────────────────────────────────────
 
 int main() {
@@ -429,6 +455,7 @@ int main() {
     T15_streaming_insert_basic();
     T16_streaming_capacity_limit();
     T17_streaming_flush_preserves_bridges();
+    T18_embodied_kids_ball_csr();
 
     int32_t passed = 0, failed = 0;
     for (const auto& r : g_results) {

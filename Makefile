@@ -21,6 +21,10 @@
 #    make demo-robot     ./demos/robot_episodic/demo   (1 kHz,  1 ms target)
 #    make demo-ar        ./demos/ar_spatial/demo       (90 Hz,  5 ms target)
 #    make demo-voice     ./demos/voice_agent/demo      (30 Hz, 20 ms target)
+#    make demo-embodied  ./demos/embodied_scene/demo  (kids-ball multimodal)
+#    make bench-kids-mars       GPU N-sweep JSON (requires nvcc + GPU)
+#    make bench-kids-export     Write results/kids_corpus_10k.bin (no GPU)
+#    make bench-kids-baselines  FAISS on corpus bin (faiss-gpu + numpy)
 #
 #  Latency benchmark presets (match the four application demonstrators):
 #    make bench-av       ./latency_bench   60 1.0   600   2400
@@ -69,12 +73,14 @@ PERSIST_OBJS   := src/persistence.o
 SERVER_OBJS    := $(COMMON_OBJS) $(PERSIST_OBJS) $(WMMA_OBJS) src/engine_server.o
 TILED_OBJS     := src/tiled_query.o src/memory_graph.o
 
-DEMO_NAMES  := av_perception robot_episodic ar_spatial voice_agent
+DEMO_NAMES  := av_perception robot_episodic ar_spatial voice_agent embodied_scene
 DEMO_BINS   := $(foreach d,$(DEMO_NAMES),demos/$(d)/demo)
+KIDS_SWEEP  := demos/embodied_scene/bench_kids_sweep
 
 # ─── Primary targets ─────────────────────────────────────────────────
 .PHONY: all engine validate latency server demos tests run check clean info paper
-.PHONY: demo-av demo-robot demo-ar demo-voice
+.PHONY: demo-av demo-robot demo-ar demo-voice demo-embodied
+.PHONY: bench-kids-mars bench-kids-export bench-kids-baselines bench-kids-sweep-bin
 .PHONY: bench-av bench-robot bench-ar bench-voice
 .PHONY: bench-sustained bench-av-30s bench-robot-15s bench-ar-30s bench-voice-30s
 .PHONY: bench-scale bench-large bench-fp16 bench-cmng bench-mars bench-ablation bench-ablation-quick
@@ -108,6 +114,23 @@ bench_tiled: $(TILED_OBJS) src/bench_tiled.o
 # Each demo builds from its demo.cu + common objects + frame_timer.h
 demos/%/demo: demos/%/demo.cu $(COMMON_OBJS) demos/common/frame_timer.h include/memory_cuda.cuh include/memory_graph.h
 	$(NVCC) $(NVCCFLAGS) $(DEMO_INC) -lcublas -o $@ $< $(COMMON_OBJS)
+
+# Kids-ball embodied scene: GPU sweep benchmark (separate entry point)
+$(KIDS_SWEEP): demos/embodied_scene/bench_kids_sweep.cu $(COMMON_OBJS) include/memory_cuda.cuh include/memory_graph.h
+	$(NVCC) $(NVCCFLAGS) $(DEMO_INC) -lcublas -o $@ $< $(COMMON_OBJS)
+
+bench-kids-sweep-bin: $(KIDS_SWEEP)
+
+bench-kids-mars: $(KIDS_SWEEP)
+	@mkdir -p results
+	$(KIDS_SWEEP) results/kids_ball_mars_sweep.json
+
+bench-kids-export: $(KIDS_SWEEP)
+	@mkdir -p results
+	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768
+
+bench-kids-baselines:
+	@python3 scripts/bench_kids_ball_faiss.py --corpus results/kids_corpus_10k.bin | tee results/kids_ball_faiss.json
 
 # ─── Object file rules ───────────────────────────────────────────────
 src/persistence.o: src/persistence.cpp include/persistence.h include/memory_graph.h
@@ -167,6 +190,9 @@ demo-ar:    demos/ar_spatial/demo
 
 demo-voice: demos/voice_agent/demo
 	./demos/voice_agent/demo
+
+demo-embodied: demos/embodied_scene/demo
+	./demos/embodied_scene/demo
 
 # Latency benchmark presets (rate, budget_ms, frames, corpus)
 bench-av:    latency_bench

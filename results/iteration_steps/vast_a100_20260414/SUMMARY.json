@@ -1,0 +1,23 @@
+{
+  "tool": "mars-kids-boost-iterate",
+  "version": "1.0",
+  "criterion": "maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)",
+  "best_global_episode_same_boost": 0.250000,
+  "best_global_composite_score": 2.664062,
+  "best_global_step_file": "results/iteration_steps/vast_a100_20260414/step_global_boost_250.json",
+  "episode_scoped_composite_score": 3.000000,
+  "episode_scoped_wall_p99_ms": 0.1543,
+  "episode_scoped_step_file": "results/iteration_steps/vast_a100_20260414/step_episode_scoped.json",
+  "steps": [
+    {"boost":0.000000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_0.json","composite_score":2.628906,"wall_p99_ms":0.2893,"hit_top15":0.828125,"hit_compact":0.972656},
+    {"boost":0.100000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_100.json","composite_score":2.566406,"wall_p99_ms":0.2905,"hit_top15":0.796875,"hit_compact":0.972656},
+    {"boost":0.150000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_150.json","composite_score":2.527344,"wall_p99_ms":0.2879,"hit_top15":0.769531,"hit_compact":0.988281},
+    {"boost":0.200000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_200.json","composite_score":2.617188,"wall_p99_ms":0.2909,"hit_top15":0.812500,"hit_compact":0.992188},
+    {"boost":0.250000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_250.json","composite_score":2.664062,"wall_p99_ms":0.2409,"hit_top15":0.843750,"hit_compact":0.976562},
+    {"boost":0.300000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_300.json","composite_score":2.546875,"wall_p99_ms":0.2510,"hit_top15":0.785156,"hit_compact":0.976562},
+    {"boost":0.350000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_350.json","composite_score":2.632812,"wall_p99_ms":0.2457,"hit_top15":0.828125,"hit_compact":0.976562},
+    {"boost":0.400000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_400.json","composite_score":2.656250,"wall_p99_ms":0.2456,"hit_top15":0.832031,"hit_compact":0.992188},
+    {"boost":0.500000,"file":"results/iteration_steps/vast_a100_20260414/step_global_boost_500.json","composite_score":2.574219,"wall_p99_ms":0.2461,"hit_top15":0.800781,"hit_compact":0.972656},
+    {"boost":-1.000000,"file":"results/iteration_steps/vast_a100_20260414/step_episode_scoped.json","composite_score":3.000000,"wall_p99_ms":0.1543,"hit_top15":1.000000,"hit_compact":1.000000}
+  ]
+}

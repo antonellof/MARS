@@ -2,12 +2,25 @@
 
 Use this checklist when running **hardware ablations** on a rented GPU. Copy JSON outputs into this folder (or `results/embodied-kids-vast-a100-40gb/`) and record `RUN_META.json` (git SHA, GPU name, driver, CUDA, clock lock if any).
 
+## Episode boost coarse search (pick default `episode_same_boost`)
+
+```bash
+make bench-kids-iterate
+# or custom grid / output dir:
+./demos/embodied_scene/bench_kids_sweep \
+  --boost-grid 0,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.5 \
+  --iterate-n 10000 --iterate-probes 256 \
+  --iterate-steps-dir results/iteration_steps/my_run
+```
+
+See `SUMMARY.md` in the steps directory. Measured A100 run: [vast_a100_20260414/SUMMARY.md](../iteration_steps/vast_a100_20260414/SUMMARY.md).
+
 ## Core sweep (MARS)
 
 ```bash
 make clean && make
 make tests
-./bench_kids_sweep results/vast-validation-matrix/mars_kids_sweep_$(date +%Y%m%d).json
+./demos/embodied_scene/bench_kids_sweep results/vast-validation-matrix/mars_kids_sweep_$(date +%Y%m%d).json
 ```
 
 `bench_kids_sweep` (v1.2+) emits **variants**:

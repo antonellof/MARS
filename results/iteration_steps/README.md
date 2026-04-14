@@ -28,3 +28,9 @@ Re-run the full multi-N sweep when you change defaults:
 ```bash
 ./demos/embodied_scene/bench_kids_sweep results/kids_ball_mars_sweep.json
 ```
+
+## Saved hardware runs
+
+| Run | GPU | Notes |
+|-----|-----|--------|
+| [vast_a100_20260414](vast_a100_20260414/) | A100-SXM4-40GB | Best **global** boost **0.25** at N=10k (`SUMMARY.md`); demo default updated to match. |

@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
     cfg.bfs_score_decay         = 0.55f;
     cfg.modality_filter         = -1;
     cfg.retrieval_scope         = RetrievalScope::Global;
-    cfg.episode_same_boost      = 0.35f;
+    cfg.episode_same_boost      = 0.25f;  // tuned via bench --boost-grid on A100 (see results/iteration_steps/)
 
     std::mt19937 rng(914u);
     std::uniform_int_distribution<size_t> pick_img(0, image_nodes.size() - 1);

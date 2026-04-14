@@ -1,0 +1,13 @@
+{
+  "host": "ssh4.vast.ai",
+  "ssh_port": 13539,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "iterate_n": 10000,
+  "iterate_probes": 256,
+  "boost_grid": "0,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.5",
+  "git_commit": "06081a9",
+  "steps_dir": "results/iteration_steps/vast_a100_20260414",
+  "best_global_episode_same_boost": 0.25,
+  "best_composite_score": 2.6641,
+  "note": "Composite = 2*hit_top15 + hit_compact. Episode-scoped is a different contract (score ceiling 3.0)."
+}

@@ -58,12 +58,16 @@ GENCODE   := -gencode arch=compute_70,code=sm_70 \
 NVCCFLAGS := $(CXXFLAGS) $(GENCODE) --expt-relaxed-constexpr
 
 # ─── Source files ────────────────────────────────────────────────────
-COMMON_OBJS    := src/memory_graph.o src/memory_cuda.o
-ENGINE_OBJS    := $(COMMON_OBJS) src/main.o
+GRAPH_OBJS     := src/cuda_graph_capture.o
+WMMA_OBJS      := src/wmma_similarity.o
+COMMON_OBJS    := src/memory_graph.o src/memory_cuda.o $(GRAPH_OBJS)
+ENGINE_OBJS    := $(COMMON_OBJS) $(WMMA_OBJS) src/main.o
 VALIDATE_OBJS  := $(COMMON_OBJS) src/validate.o
 CMNG_OBJS      := src/cmng_build.o src/cmng_search.o
-LATENCY_OBJS   := $(COMMON_OBJS) $(CMNG_OBJS) src/latency_bench.o
-SERVER_OBJS    := $(COMMON_OBJS) src/engine_server.o
+LATENCY_OBJS   := $(COMMON_OBJS) $(CMNG_OBJS) $(WMMA_OBJS) src/latency_bench.o
+PERSIST_OBJS   := src/persistence.o
+SERVER_OBJS    := $(COMMON_OBJS) $(PERSIST_OBJS) $(WMMA_OBJS) src/engine_server.o
+TILED_OBJS     := src/tiled_query.o src/memory_graph.o
 
 DEMO_NAMES  := av_perception robot_episodic ar_spatial voice_agent
 DEMO_BINS   := $(foreach d,$(DEMO_NAMES),demos/$(d)/demo)
@@ -75,6 +79,7 @@ DEMO_BINS   := $(foreach d,$(DEMO_NAMES),demos/$(d)/demo)
 .PHONY: bench-sustained bench-av-30s bench-robot-15s bench-ar-30s bench-voice-30s
 .PHONY: bench-scale bench-large bench-fp16 bench-cmng bench-mars bench-ablation bench-ablation-quick
 .PHONY: bench-av-keepalive bench-av-30s-keepalive
+.PHONY: bench-graph bench-wmma bench-tiled
 
 all: engine validate latency server demos
 
@@ -97,11 +102,17 @@ latency_bench: $(LATENCY_OBJS)
 engine_server: $(SERVER_OBJS)
 	$(NVCC) $(NVCCFLAGS) -lcublas -o engine_server $^
 
+bench_tiled: $(TILED_OBJS) src/bench_tiled.o
+	$(NVCC) $(NVCCFLAGS) -lcublas -o bench_tiled $^
+
 # Each demo builds from its demo.cu + common objects + frame_timer.h
 demos/%/demo: demos/%/demo.cu $(COMMON_OBJS) demos/common/frame_timer.h include/memory_cuda.cuh include/memory_graph.h
 	$(NVCC) $(NVCCFLAGS) $(DEMO_INC) -lcublas -o $@ $< $(COMMON_OBJS)
 
 # ─── Object file rules ───────────────────────────────────────────────
+src/persistence.o: src/persistence.cpp include/persistence.h include/memory_graph.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 src/%.o: src/%.cpp include/memory_graph.h
 	$(NVCC) $(NVCCFLAGS) -x cu -c $< -o $@
 
@@ -114,10 +125,22 @@ src/cmng_build.o: src/cmng_build.cu include/cmng.cuh include/memory_cuda.cuh
 src/cmng_search.o: src/cmng_search.cu include/cmng.cuh include/memory_cuda.cuh
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
 
+src/cuda_graph_capture.o: src/cuda_graph_capture.cu include/cuda_graph_capture.h include/memory_cuda.cuh
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+src/wmma_similarity.o: src/wmma_similarity.cu include/wmma_similarity.cuh include/memory_cuda.cuh
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+src/tiled_query.o: src/tiled_query.cu include/tiled_query.h
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+src/bench_tiled.o: src/bench_tiled.cu include/tiled_query.h
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
 # ─── Tests (host-only, NO CUDA NEEDED) ───────────────────────────────
 tests:
 	$(CXX) -std=c++17 -Iinclude -O2 -o tests/run_tests \
-	    src/memory_graph.cpp tests/test_memory_graph.cpp
+	    src/memory_graph.cpp src/persistence.cpp src/memory_budget.cpp src/streaming.cpp tests/test_memory_graph.cpp
 	./tests/run_tests
 
 # ─── Convenience run targets ─────────────────────────────────────────
@@ -364,9 +387,59 @@ bench-ablation-quick: latency_bench
 			| tee results/ablation/$${variant}_5000.json; \
 	done
 
+# ─── CUDA Graph capture A/B comparison ──────────────────────────────
+bench-graph: latency_bench
+	@mkdir -p results
+	@echo "══════════ No Graph (N=10K) ══════════"
+	./latency_bench 60 1.0 900 10000 | tee results/no_graph_10k.json
+	@echo "══════════ With Graph (N=10K) ══════════"
+	./latency_bench 60 1.0 900 10000 --graph | tee results/graph_10k.json
+	@echo "══════════ No Graph (N=50K) ══════════"
+	./latency_bench 60 5.0 900 50000 | tee results/no_graph_50k.json
+	@echo "══════════ With Graph (N=50K) ══════════"
+	./latency_bench 60 5.0 900 50000 --graph | tee results/graph_50k.json
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "  CUDA Graph A/B comparison complete."
+	@echo "═══════════════════════════════════════════════════"
+
+# ─── WMMA tensor-core A/B comparison ─────────────────────────────────
+bench-wmma: latency_bench
+	@mkdir -p results
+	@echo "══════════ FP32 scalar (N=10K) ══════════"
+	./latency_bench 60 1.0 900 10000 | tee results/fp32_scalar_10k.json
+	@echo "══════════ FP16 scalar (N=10K) ══════════"
+	./latency_bench 60 1.0 900 10000 --fp16 | tee results/fp16_scalar_10k.json
+	@echo "══════════ FP16 WMMA (N=10K) ══════════"
+	./latency_bench 60 1.0 900 10000 --fp16 --wmma | tee results/fp16_wmma_10k.json
+	@echo "══════════ FP32 scalar (N=50K) ══════════"
+	./latency_bench 60 5.0 900 50000 | tee results/fp32_scalar_50k.json
+	@echo "══════════ FP16 scalar (N=50K) ══════════"
+	./latency_bench 60 5.0 900 50000 --fp16 | tee results/fp16_scalar_50k.json
+	@echo "══════════ FP16 WMMA (N=50K) ══════════"
+	./latency_bench 60 5.0 900 50000 --fp16 --wmma | tee results/fp16_wmma_50k.json
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "  WMMA tensor-core A/B comparison complete."
+	@echo "═══════════════════════════════════════════════════"
+
+# ─── Tiled out-of-core benchmark (100M+ corpus) ─────────────────────
+bench-tiled: bench_tiled
+	@mkdir -p results
+	@echo "══════════ Tiled: N=10M ══════════"
+	./bench_tiled 10000000 768 5000000 5 | tee results/tiled_10m.json
+	@echo "══════════ Tiled: N=50M ══════════"
+	./bench_tiled 50000000 768 5000000 3 | tee results/tiled_50m.json
+	@echo "══════════ Tiled: N=100M ══════════"
+	./bench_tiled 100000000 768 5000000 3 | tee results/tiled_100m.json
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo "  Tiled out-of-core benchmark complete."
+	@echo "═══════════════════════════════════════════════════"
+
 clean:
 	rm -f src/*.o
-	rm -f memory_engine validate latency_bench engine_server
+	rm -f memory_engine validate latency_bench engine_server bench_tiled
 	rm -f $(DEMO_BINS)
 	rm -f tests/run_tests
 	rm -rf results/

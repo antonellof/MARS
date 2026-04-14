@@ -97,12 +97,11 @@ def make_pipeline():
             fontsize=10, fontweight="bold", color=C_GPU,
             style="italic")
 
-    # ── Four kernel stages (inside GPU box) ──
+    # ── Three kernel stages (inside GPU box) ──
     stages = [
-        (4.8, 5.2, "Stage 1\ncuBLAS SGEMV\nCosine Similarity\n(matrix-vector multiply)", "#2980b9"),
-        (7.0, 5.2, "Stage 2\nTemporal Rerank\nscore × exp(−λ·age)",                       "#16a085"),
-        (9.2, 5.2, "Stage 3\nCUB Radix Sort\nTop-K Selection",                          "#8e44ad"),
-        (11.4, 5.2, "Stage 4\nBFS Expansion\nwarp-cooperative\n+ atomicCAS",             "#c0392b"),
+        (5.0, 5.2, "Stage 1\ncuBLAS SGEMV\n+ Temporal Decay\nscore × exp(−λ·age)",   "#2980b9"),
+        (8.0, 5.2, "Stage 2\nCUB Radix Sort\nTop-K Selection",                        "#8e44ad"),
+        (11.0, 5.2, "Stage 3\nBFS Expansion\nwarp-cooperative\n+ atomicCAS",           "#c0392b"),
     ]
     for i, (x, y, label, color) in enumerate(stages):
         box = FancyBboxPatch((x, y - 0.8), 1.8, 1.8,
@@ -112,7 +111,7 @@ def make_pipeline():
         ax.add_patch(box)
         ax.text(x + 0.9, y + 0.1, label, ha="center", va="center",
                 fontsize=7.3, fontweight="bold", color="white")
-        if i < 3:
+        if i < len(stages) - 1:
             ax.annotate("", xy=(stages[i+1][0], y + 0.1),
                         xytext=(x + 1.8, y + 0.1),
                         arrowprops=dict(arrowstyle="->", color=C_GPU, lw=1.8))

@@ -164,9 +164,13 @@ struct QueryContext {
     bool use_cuda_graph = false;
     bool use_fp16       = false;
 
-    // cuBLAS similarity + CUB radix-sort top-K
-    bool use_cublas     = false;  // replace cosine_similarity_kernel with cublasSgemv
-    bool use_cub_topk   = false;  // replace top_k_kernel with cub::DeviceRadixSort
+    // cuBLAS similarity + CUB radix-sort top-K (default ON for best performance)
+    bool use_cublas     = true;   // cublasSgemv for similarity (2-3x faster at N>10K)
+    bool use_cub_topk   = true;   // CUB DeviceRadixSort for top-K (10x faster)
+    bool use_wmma       = false;  // replace FP16 scalar with WMMA tensor-core similarity
+
+    // FP16 query staging buffer (for WMMA kernel)
+    half*  d_query_fp16 = nullptr;
 
     // cuBLAS handle (void* to avoid #include <cublas_v2.h> in header)
     void* cublas_handle = nullptr;

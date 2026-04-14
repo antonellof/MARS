@@ -60,5 +60,10 @@ benchmarks/*/data/
 # ─── LibreOffice lock files (in case docs are edited locally) ───
 .~lock.*#
 
+# ─── Generated demo videos ───
+demos/av_visual/*.mp4
+demos/av_visual/*.avi
+demos/av_visual/preview_*.png
+
 # ─── Temporary files ───
 *.tmp

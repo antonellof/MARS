@@ -90,13 +90,18 @@ Retrieval runs as four CUDA kernels entirely on GPU-resident data.
   needs re-validation on hardware.
 - **`src/engine_server.cu` exists but is untested on GPU.**
 
+### 🔀 Scaffolded on feature branches (awaiting hardware validation)
+- **Binary persistence** — `feature/persistence` — save/load with FNV-1a checksums, 3 tests.
+- **Python bindings** — `feature/python-bindings` — pybind11 wrapper, pytest suite.
+- **Streaming insertion** — `feature/streaming-insertion` — ring buffer, incremental NSN, 3 tests.
+- **VRAM budget calculator** — `feature/memory-budget` — deterministic pre-flight budget, 4 tests.
+- **CUDA Graph capture** — `feature/cuda-graph-capture` — graph management layer, bench-graph target.
+- **FP16 tensor-core** — `feature/fp16-tensor-core` — WMMA kernel, bench-wmma target.
+
 ### ❌ Not started
-- Python bindings (pybind11).
-- FP16 + tensor-core optimization of the similarity kernel.
-- CUDA Graph capture of the 4-kernel pipeline.
 - Multi-GPU sharding via NVLink.
-- Persistence layer (checkpoint/restore of the memory graph to disk).
-- Streaming insertion API.
+- Kernel fusion (temporal rerank + importance into SGEMV epilogue).
+- Multi-stream concurrent retrieval.
 
 ## Repository layout
 
@@ -321,20 +326,43 @@ unimodal graph + separate cross-modal index.
 4. ✅ GPU keepalive for low-rate workloads (--keepalive flag).
 5. ✅ Paper: new Engineering Methodology section + Industry Adoption Path.
 
-**Session N+6 (next — v3 re-validation):**
-1. User runs `make clean && make` on vast.ai A100 → rebuild with v3 pipeline.
-2. Run full benchmark suite:
+**Session N+6 (DONE — feature branch scaffolding):**
+1. ✅ Moved AV visual demo to `feature/av-visual-demo` branch.
+2. ✅ Created 6 feature branches from main, each with scaffolded code + tests:
+   - `feature/persistence` — binary save/load with FNV-1a checksums (3 new tests)
+   - `feature/python-bindings` — pybind11 wrapper + pytest suite
+   - `feature/streaming-insertion` — ring buffer + incremental NSN edges (3 new tests)
+   - `feature/memory-budget` — VRAM budget calculator (4 new tests)
+   - `feature/cuda-graph-capture` — graph management layer + bench-graph target
+   - `feature/fp16-tensor-core` — WMMA kernel + bench-wmma target
+3. ✅ Updated paper (Future Work section + XeroZerox citation).
+4. ✅ Updated README (roadmap table + vast.ai validation plan).
+5. ✅ Updated ARCHITECTURE.md (extensions-in-progress section).
+
+**Session N+7 (next — v3 re-validation + feature branch validation):**
+1. Run `make clean && make` on vast.ai A100 → rebuild with v3 pipeline.
+2. Run full baseline benchmark suite:
    `make check && make demo-av && make demo-robot && make demo-ar && make demo-voice`
    `make bench-av && make bench-robot && make bench-ar && make bench-voice`
-   `make bench-av-keepalive && make bench-sustained && make bench-scale`
-3. Update paper tables with v3 measured numbers.
-4. Tag as v0.3.0 and push.
+   `make bench-sustained && make bench-scale`
+3. Merge `feature/persistence` → run save/load round-trip + bench-av regression.
+4. Merge `feature/memory-budget` → compare predicted vs actual VRAM.
+5. Merge `feature/streaming-insertion` → streaming insert 1K nodes + re-bench.
+6. Update paper tables with measured numbers.
+7. Tag as v0.4.0 and push.
 
-**Session N+7 (after v0.3.0):**
+**Session N+8 (CUDA Graph + WMMA validation):**
+1. Merge `feature/cuda-graph-capture` → `make bench-graph` A/B comparison.
+2. Merge `feature/fp16-tensor-core` → `make bench-wmma` tensor-core comparison.
+3. Generate charts: graph vs no-graph, FP32 vs FP16-scalar vs FP16-WMMA.
+4. Update paper with measured CUDA Graph and WMMA results.
+
+**Session N+9 (FAISS comparison + paper submission):**
 1. Run FAISS GPU flat scan and cuVS CAGRA at same corpus sizes (1K-50K)
    for direct recall-vs-latency comparison.
 2. Update paper comparison table (Table 7) with measured numbers.
-3. Submit paper to arXiv under cs.DC with cs.IR cross-listing.
+3. Merge `feature/python-bindings` → verify `pip install` + pytest.
+4. Submit paper to arXiv under cs.DC with cs.IR cross-listing.
 
 ## Scientific integrity notes
 

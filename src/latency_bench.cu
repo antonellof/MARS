@@ -333,8 +333,10 @@ int main(int argc, char** argv) {
         ctx = create_query_context(corpus_size, dim, top_k);
         ctx.use_fp16       = use_fp16;
         ctx.use_cuda_graph = use_graph;
-        ctx.use_cublas     = use_mars;
-        ctx.use_cub_topk   = use_mars;
+        // cuBLAS+CUB is default ON (set in QueryContext struct).
+        // --mars flag is now redundant but kept for backward compatibility.
+        // Only override to false if neither default nor --mars is set.
+        // Since defaults are true, we keep them unless explicitly needed.
     }
 
     // ─── Warm up ─────────────────────────────────────────────────

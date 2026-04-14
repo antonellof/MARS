@@ -1,0 +1,85 @@
+\documentclass[border=5pt]{standalone}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, shadows.blur, decorations.pathreplacing}
+
+\definecolor{stage1}{HTML}{4472C4}
+\definecolor{stage2}{HTML}{70AD47}
+\definecolor{stage3}{HTML}{ED7D31}
+\definecolor{iogray}{HTML}{95A5A6}
+\definecolor{titledark}{HTML}{1A3A5C}
+\definecolor{databg}{HTML}{F0F0F0}
+\definecolor{summbox}{HTML}{FFF3CD}
+\definecolor{summbor}{HTML}{FFC107}
+\definecolor{deadred}{HTML}{C0392B}
+
+\begin{document}
+\begin{tikzpicture}[
+    stage/.style={draw=white, fill=#1, rounded corners=4pt,
+        minimum width=2.4cm, minimum height=1.1cm,
+        font=\sffamily\scriptsize\bfseries, text=white, align=center,
+        blur shadow={shadow blur steps=3, shadow xshift=0.5mm, shadow yshift=-0.5mm}},
+    io/.style={draw=gray!60, fill=databg, rounded corners=3pt,
+        minimum width=1.4cm, minimum height=0.85cm,
+        font=\sffamily\tiny, text=gray!80!black, align=center},
+    datastore/.style={draw=gray!40, fill=white, rounded corners=2pt,
+        minimum width=2.2cm, minimum height=0.65cm,
+        font=\sffamily\tiny, text=gray!70!black, align=center},
+    arr/.style={-{Stealth[length=4pt]}, line width=1.2pt, color=titledark},
+    darr/.style={-{Stealth[length=3pt]}, line width=0.7pt, color=gray!50, dashed},
+    >=Stealth
+]
+
+% Title
+\node[font=\sffamily\small\bfseries, text=titledark] at (6.5, 4.8)
+    {MARS Retrieval Pipeline -- Per-Stage Timing (N=10K, A100 SXM4)};
+
+% ── Pipeline stages ──────────────────────────────────────
+\node[io] (input) at (0, 3.0) {H2D Copy\\(query)};
+\node[stage=stage1] (sim) at (3.0, 3.0) {cuBLAS SGEMV\\+ Temporal Decay};
+\node[stage=stage2] (topk) at (6.2, 3.0) {CUB Radix\\Sort Top-K};
+\node[stage=stage3] (bfs) at (9.2, 3.0) {BFS Graph\\Expansion};
+\node[io] (output) at (12.2, 3.0) {D2H\\Compact};
+
+% Arrows
+\draw[arr] (input.east) -- (sim.west);
+\draw[arr] (sim.east) -- (topk.west);
+\draw[arr] (topk.east) -- (bfs.west);
+\draw[arr] (bfs.east) -- (output.west);
+
+% ── Data stores ──────────────────────────────────────────
+\node[datastore] (emb) at (3.0, 1.2) {Embeddings\\N$\times$768 FP32 (HBM)};
+\node[datastore] (scores) at (6.2, 1.2) {Scores Array\\N$\times$FP32 (pre-alloc)};
+\node[datastore] (csr) at (9.2, 1.2) {CSR Graph\\NSN Topology (HBM)};
+
+\draw[darr] (emb.north) -- (sim.south);
+\draw[darr] (scores.north) -- (topk.south);
+\draw[darr] (csr.north) -- (bfs.south);
+
+% ── Timing labels ────────────────────────────────────────
+\node[font=\sffamily\tiny\bfseries, text=iogray] at (0, 2.15) {0.02\,ms};
+\node[font=\sffamily\tiny, text=iogray] at (0, 1.85) {pinned async};
+
+\node[font=\sffamily\tiny\bfseries, text=stage1] at (3.0, 2.15) {0.25\,ms (combined)};
+\node[font=\sffamily\tiny, text=stage1] at (3.0, 1.85) {SGEMV + decay kernel};
+
+\node[font=\sffamily\tiny\bfseries, text=stage2] at (6.2, 2.15) {0.02\,ms};
+\node[font=\sffamily\tiny, text=stage2] at (6.2, 1.85) {O(N) parallel};
+
+\node[font=\sffamily\tiny\bfseries, text=stage3] at (9.2, 2.15) {0.04\,ms};
+\node[font=\sffamily\tiny, text=stage3] at (9.2, 1.85) {2-hop warp-coop};
+
+\node[font=\sffamily\tiny\bfseries, text=iogray] at (12.2, 2.15) {0.01\,ms};
+\node[font=\sffamily\tiny, text=iogray] at (12.2, 1.85) {O(visited)};
+
+% ── Summary box ──────────────────────────────────────────
+\node[draw=summbor, fill=summbox, rounded corners=3pt,
+      font=\sffamily\scriptsize\bfseries, text=titledark,
+      minimum width=10cm, minimum height=0.55cm]
+      at (6.2, 0.3)
+      {Total wall-clock: 0.44\,ms\quad|\quad GPU kernel: 0.21\,ms\quad|\quad Overhead: 0.23\,ms (launch + sync)};
+
+\end{tikzpicture}
+\end{document}

@@ -100,65 +100,46 @@ semantically relevant depends on the quality of the shared embedding space
 
 ## 3. The CUDA kernels
 
-The retrieval pipeline uses four kernel stages. The current version
-replaces the similarity kernel with cuBLAS SGEMV and the top-K kernel
-with CUB DeviceRadixSort, while keeping the temporal rerank and BFS
-kernels.
+The retrieval pipeline has three stages in its current optimized form.
+The similarity uses cuBLAS SGEMV, temporal decay is applied in a
+lightweight follow-up kernel, top-K uses CUB DeviceRadixSort, and
+BFS uses the custom warp-cooperative kernel.
 
-### Kernel 1: `cosine_similarity_kernel`
+### Stage 1: cuBLAS SGEMV + Temporal Decay
 
-**Grid**: N blocks (one per memory node)
-**Block**: 256 threads = 8 warps
-
-Each block computes the dot product between the query vector and one
-memory's embedding. The 256 threads cooperate:
-
-1. Each thread accumulates a partial dot product across D/256 dimensions
-2. Warp-level reduction via `__shfl_down_sync` gives one scalar per warp
-3. Block-level reduction across warps via shared memory gives the final score
+A single `cublasSgemv` call computes the dot product of the query
+vector against all N embeddings. Temporal decay (`score *= exp(-lambda
+* age)`) is applied in a separate lightweight kernel immediately after
+SGEMV, before top-K selection. On the custom kernel path (fallback),
+decay is fused directly into the similarity kernel — eliminating one
+kernel launch and one N-element read/write pass. Both paths produce
+identical results.
 
 Because embeddings are L2-normalized at insertion, cosine similarity =
 dot product. This sidesteps the per-query normalization cost.
 
-The modality filter is implemented as an early exit: if the node's modality
-doesn't match the filter, thread 0 writes -∞ and the block returns, avoiding
-the embedding load entirely.
+The modality filter is an early exit: if the node's modality doesn't
+match, thread 0 writes -inf and the block returns, skipping the
+embedding load entirely.
 
-**Memory pattern**: Coalesced. Each warp reads 32 contiguous floats from the
-embedding, which is a single 128-byte transaction on A100.
+**Memory pattern**: Coalesced. Each warp reads 32 contiguous floats,
+a single 128-byte transaction on A100.
 
-### Kernel 2: `temporal_rerank_kernel`
+**Temporal decay constants** (half-life = ln2 / lambda):
+- AV perception: lambda=0.5 (2-second tracking window)
+- Humanoid robot: lambda=0.1 (10-second episodic window)
+- AR/VR spatial: lambda=0.003 (5-minute session)
+- Voice agent: lambda=1e-4 (30-minute conversation)
 
-**Grid**: ⌈N / 256⌉ blocks
-**Block**: 256 threads (one thread per memory)
+### Stage 2: CUB DeviceRadixSort Top-K
 
-Embarrassingly parallel. Computes:
+Replaces the original custom top-K kernel. CUB radix sort runs in
+O(N) and eliminates the O(256*K^2) serial merge bottleneck that
+dominated at ~0.35 ms in the original version. On A100 at N=10K:
+~0.02 ms vs ~0.35 ms for the old tiled kernel.
 
-```
-final_score[i] = similarity[i] × exp(-λ × (query_timestamp - memory_timestamp[i]))
-```
-
-The `__expf` intrinsic is the fast hardware exponential — about 4x faster
-than `exp()` on A100, with slightly relaxed accuracy. Sub-microsecond total
-latency at any corpus size we care about.
-
-This is where "automatic forgetting" happens: older memories get
-exponentially down-weighted, so they lose to recent memories of similar
-similarity.
-
-### Kernel 3: `top_k_kernel`
-
-**Grid**: 1 block
-**Block**: 256 threads
-
-Each thread maintains its own local top-K buffer in registers (K ≤ 64), then
-merges via shared memory, then thread 0 does the final K-way selection.
-
-An optimization round added a **tiled two-pass variant** (`top_k_tiled_pass1` +
-`top_k_tiled_pass2`) that splits the scores array into tiles of 16K elements,
-computes local top-K per tile in parallel, then merges. The single-block path
-is used when N fits in one tile (≤16K); the tiled path activates above that.
-At the target workload sizes (2K–10K), the single-block path is faster.
+A custom kernel path (`top_k_kernel` / `top_k_tiled_pass1/pass2`)
+remains available as a fallback for systems without CUB.
 
 ### Kernel 4: `bfs_expand_kernel` (the interesting one)
 
@@ -243,25 +224,142 @@ expansion reaches at most K × average_degree² ≈ 10 × 121 ≈ 1,210 nodes �
 regardless of total corpus size. That's why the BFS latency stays near
 0.1 ms from N=1K to N=16K.
 
-## 5. What we give up
+## 5. Trade-offs and limitations
 
-1. **Not persistent.** Data lives in VRAM. A crash loses everything unless
-   you snapshot to disk manually.
-2. **Single-GPU ceiling.** ~12M memories on a 40 GB A100, ~24M on an 80 GB
-   H100. Beyond that, multi-GPU sharding is needed.
-3. **No transactions.** There's no equivalent of Postgres ACID. Concurrent
-   inserts are possible but deletion requires tombstoning + periodic
-   compaction.
-4. **GPU-bound.** Only runs on NVIDIA GPUs with compute capability 7.0+.
-   No CPU fallback path. This is deliberate — a CPU fallback would imply
-   that the system can degrade gracefully, which is incompatible with
-   deterministic latency guarantees.
+1. **Soft real-time, not hard real-time.** MARS demonstrates empirical
+   p99 compliance with zero deadline misses over 30-second runs. True
+   hard real-time (ISO-26262 ASIL-D) requires provable worst-case
+   execution time (WCET) bounds, which MARS does not provide.
+2. **Persistence is optional.** Data lives in VRAM by default. A binary
+   checkpoint/restore mechanism (`save_graph` / `load_graph`) is
+   available but crash recovery requires explicit snapshots.
+3. **Single-GPU ceiling.** ~13M memories on a 40 GB A100. Beyond that,
+   multi-GPU sharding via NVLink or the tiled out-of-core path is needed.
+4. **Deletion via tombstoning.** Deleted nodes are marked with -inf
+   similarity and excluded from results. Periodic compaction rebuilds
+   the CSR. Temporal decay serves as an implicit TTL — memories older
+   than ~5 half-lives score near zero and are never returned.
+5. **GPU-bound.** Only runs on NVIDIA GPUs with compute capability 7.0+.
+   No CPU fallback path — deliberate for deterministic latency.
+6. **Slower than a raw ring buffer.** A hand-rolled circular buffer with
+   cuBLAS SGEMV at N=2,400 would achieve ~0.1 ms — faster than MARS's
+   0.31 ms. MARS's value is added functionality (temporal decay, cross-
+   modal bridges, streaming insertion) rather than raw speed.
+7. **Importance scoring not independently evaluated.** The importance
+   weighting API exists (boost on access, global decay) but no experiment
+   isolates its effect on retrieval quality.
+8. **Cross-modal recall metric is structural, not semantic.** The
+   cross-modal diversity metric measures whether results span modalities,
+   not whether they are semantically relevant across modalities.
 
-All numbers are measured on an NVIDIA A100X (80 GB, CUDA 12.0). See
-`results/` for raw JSON data.
+All numbers measured on A100 SXM4 40 GB, CUDA 12.8. See `results/`
+for raw JSON data.
 
-These are the right trade-offs for a **real-time retrieval substrate** —
-the memory layer inside an AV perception stack, a robot controller, an AR
-headset, or a voice agent. They are the wrong trade-offs for a primary
-system of record, which is why this project is meant to sit *alongside* a
-traditional persistence layer, not replace it.
+These are the right trade-offs for a **retrieval substrate for streaming
+perception** — the memory layer inside an AV perception stack, a robot
+controller, or a voice agent. They are the wrong trade-offs for a
+primary system of record, which is why MARS is meant to sit *alongside*
+a persistence layer, not replace it.
+
+## 6. Extensions in progress
+
+Six features are under development on feature branches. Each is designed
+to be merged independently.
+
+### Binary persistence (`feature/persistence`)
+
+Binary checkpoint/restore for the full MemoryGraph:
+
+```
+[magic: "MARS"] [version: u32] [N: i32] [E: i32] [D: i32]
+[row_offsets: (N+1)×i32] [col_indices: E×i32]
+[embeddings: N×D×f32] [modalities: N×i32] [timestamps: N×f32]
+[checksum: FNV-1a u64]
+```
+
+API: `save_graph(graph, path)` / `load_graph(graph, path)`. Wires into
+the engine server's SAVE/LOAD commands (currently stubs).
+
+### Streaming insertion (`feature/streaming-insertion`)
+
+Pre-allocated `StreamingBuffer` with configurable capacity. Nodes
+accumulate in a host-side staging area and batch-commit to the CSR graph
+with incremental NSN edge construction (ring lattice + cross-modal
+bridges for new nodes only). Thread-safe — multiple producer threads can
+call `insert()` concurrently.
+
+This avoids per-node `cudaMalloc` and full graph rebuilds, following the
+centralized memory pool pattern recommended for safety-critical GPU
+systems.
+
+### VRAM budget calculator (`feature/memory-budget`)
+
+Deterministic pre-flight computation of worst-case GPU memory usage:
+
+```cpp
+MemoryBudget b = compute_memory_budget(N, D, avg_degree, max_k);
+print_budget(b);           // itemized breakdown
+budget_fits(b, vram_bytes); // fits-in-VRAM check
+```
+
+Covers all allocations: CSR arrays, FP32/FP16 embeddings, importance
+weights, edge hit counters, QueryContext scratch buffers, cuBLAS handle,
+CUB temp storage, CUDA events/streams.
+
+### CUDA Graph capture (`feature/cuda-graph-capture`)
+
+Records the 4-kernel retrieval pipeline as a CUDA Graph. On replay,
+eliminates per-query kernel launch overhead (~5-15 μs × 4 kernels).
+Automatic re-capture when N, K, bfs_max_hops, or modality_filter change.
+
+### WMMA tensor-core similarity (`feature/fp16-tensor-core`)
+
+Uses `nvcuda::wmma` for 16×16×16 matrix multiply on tensor cores (V100+).
+Two implementations: warp-shuffle FP16 dot product (robust default) and
+full WMMA MMA kernel. Embedding dimension must be padded to multiples of 16.
+
+### Python bindings (`feature/python-bindings`)
+
+pybind11 wrapper exposing `MemoryGraph`, `Modality`, NSN builder, and
+NumPy-compatible embedding/modality/timestamp accessors. Host-only build
+(`pip install -e python/`) works without a GPU.
+
+### Tiled out-of-core retrieval (`src/tiled_query.cu`)
+
+For corpus sizes exceeding GPU VRAM (>13M on A100 40GB), embeddings
+reside in host pinned memory and are streamed through GPU HBM in tiles.
+
+**Architecture:**
+```
+Host RAM (pinned)          GPU HBM (40 GB)
+┌─────────────┐            ┌─────────────┐
+│ Tile 1 (5M) │──H2D──────>│ d_tile_emb  │──cuBLAS──>│ d_sim │──top-K──>│ tile_results │
+│ Tile 2 (5M) │            │ (reused)    │           │       │          │              │
+│ ...         │            └─────────────┘           └───────┘          └──────────────┘
+│ Tile N (5M) │                                                                │
+└─────────────┘                                                     Host merge (final top-K)
+```
+
+**Measured performance (A100 SXM4 40GB):**
+
+| N | Tiles | H2D Transfer | GPU Compute | Total |
+|---|-------|-------------|-------------|-------|
+| 10M | 2 | 2,479 ms (98.5%) | 37.6 ms (1.5%) | 2,517 ms |
+| 50M | 10 | 13,100 ms (98.5%) | 203 ms (1.5%) | 14,017 ms |
+
+The GPU is idle 98.5% of the time — the bottleneck is PCIe Gen4 bandwidth
+at ~12.4 GB/s. Multi-GPU with NVLink (600 GB/s) would reduce transfer time
+by 48x, bringing 100M queries under 1 second.
+
+## 7. Measured scaling summary (A100 SXM4 40GB)
+
+| N | Mode | p99 | GPU kernel | Status |
+|---|------|-----|-----------|--------|
+| 1K | In-VRAM | 0.31 ms | 0.12 ms | Sub-ms |
+| 10K | In-VRAM | 0.44 ms | 0.21 ms | Sub-ms |
+| 50K | In-VRAM | 0.56 ms | 0.32 ms | Sub-ms |
+| 1M | In-VRAM | 2.67 ms | 2.41 ms | Real-time |
+| 10M | In-VRAM | 22.3 ms | 22.1 ms | Batch |
+| 13M | In-VRAM | 29.1 ms | 28.7 ms | VRAM limit |
+| 10M | Tiled | 2,517 ms | 37.6 ms | PCIe-bound |
+| 50M | Tiled | 14,017 ms | 203 ms | PCIe-bound |

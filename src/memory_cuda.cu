@@ -93,6 +93,114 @@ __global__ void cosine_similarity_kernel(
 }
 
 // ============================================================================
+//  KERNEL: Fused cosine similarity + temporal rerank
+//
+//  Combines Stage 1 (similarity) and Stage 2 (temporal rerank) into a
+//  single kernel, eliminating one kernel launch (~5-15 μs) and one full
+//  N-element read/write pass. Writes directly to final_scores, skipping
+//  the intermediate similarity buffer.
+//
+//  Grid: N blocks × 256 threads (one block per memory node).
+// ============================================================================
+__global__ void cosine_similarity_fused_kernel(
+    const float*   __restrict__ embeddings,      // N * D
+    const float*   __restrict__ query,           // D
+    const int32_t* __restrict__ modalities,      // N
+    const float*   __restrict__ timestamps,      // N
+    float*         __restrict__ final_scores,    // N (output: sim * decay)
+    int32_t                      N,
+    int32_t                      D,
+    int32_t                      modality_filter,
+    float                        query_ts,
+    float                        lambda)
+{
+    int32_t node_id = blockIdx.x;
+    if (node_id >= N) return;
+
+    if (modality_filter >= 0 && modalities[node_id] != modality_filter) {
+        if (threadIdx.x == 0) final_scores[node_id] = NEG_INF;
+        return;
+    }
+
+    const float* vec = embeddings + int64_t(node_id) * D;
+
+    float partial = 0.0f;
+    for (int32_t d = threadIdx.x; d < D; d += blockDim.x) {
+        partial += vec[d] * query[d];
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        partial += __shfl_down_sync(0xFFFFFFFF, partial, offset);
+
+    __shared__ float warp_sums[WARPS_PER_BLOCK];
+    int32_t lane    = threadIdx.x & (WARP_SIZE - 1);
+    int32_t warp_id = threadIdx.x / WARP_SIZE;
+    if (lane == 0) warp_sums[warp_id] = partial;
+    __syncthreads();
+
+    if (warp_id == 0) {
+        float v = (lane < WARPS_PER_BLOCK) ? warp_sums[lane] : 0.0f;
+        for (int offset = WARPS_PER_BLOCK / 2; offset > 0; offset >>= 1)
+            v += __shfl_down_sync(0xFFFFFFFF, v, offset);
+        if (lane == 0) {
+            // Fused temporal decay — applied in same kernel
+            float age    = fmaxf(0.0f, query_ts - timestamps[node_id]);
+            float weight = __expf(-lambda * age);
+            final_scores[node_id] = v * weight;
+        }
+    }
+}
+
+// FP16 variant of the fused kernel
+__global__ void cosine_similarity_fp16_fused_kernel(
+    const half*    __restrict__ embeddings_fp16,  // N * D
+    const float*   __restrict__ query,            // D
+    const int32_t* __restrict__ modalities,       // N
+    const float*   __restrict__ timestamps,       // N
+    float*         __restrict__ final_scores,     // N (output: sim * decay)
+    int32_t                      N,
+    int32_t                      D,
+    int32_t                      modality_filter,
+    float                        query_ts,
+    float                        lambda)
+{
+    int32_t node_id = blockIdx.x;
+    if (node_id >= N) return;
+
+    if (modality_filter >= 0 && modalities[node_id] != modality_filter) {
+        if (threadIdx.x == 0) final_scores[node_id] = NEG_INF;
+        return;
+    }
+
+    const half* vec = embeddings_fp16 + int64_t(node_id) * D;
+
+    float partial = 0.0f;
+    for (int32_t d = threadIdx.x; d < D; d += blockDim.x) {
+        partial += __half2float(vec[d]) * query[d];
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        partial += __shfl_down_sync(0xFFFFFFFF, partial, offset);
+
+    __shared__ float warp_sums[WARPS_PER_BLOCK];
+    int32_t lane    = threadIdx.x & (WARP_SIZE - 1);
+    int32_t warp_id = threadIdx.x / WARP_SIZE;
+    if (lane == 0) warp_sums[warp_id] = partial;
+    __syncthreads();
+
+    if (warp_id == 0) {
+        float v = (lane < WARPS_PER_BLOCK) ? warp_sums[lane] : 0.0f;
+        for (int offset = WARPS_PER_BLOCK / 2; offset > 0; offset >>= 1)
+            v += __shfl_down_sync(0xFFFFFFFF, v, offset);
+        if (lane == 0) {
+            float age    = fmaxf(0.0f, query_ts - timestamps[node_id]);
+            float weight = __expf(-lambda * age);
+            final_scores[node_id] = v * weight;
+        }
+    }
+}
+
+// ============================================================================
 //  KERNEL: FP32-to-FP16 conversion (one thread per element)
 //  Grid: ceil(count / 256) blocks × 256 threads
 // ============================================================================
@@ -931,15 +1039,13 @@ static void launch_pipeline_kernels(
     const int32_t K = std::min(cfg.top_k, ctx.max_k);
     cudaStream_t  s = ctx.stream;
 
-    // ── STAGE 1: similarity ──────────────────────────────────────
+    // ── STAGE 1+2: fused similarity + temporal rerank ──────────────
+    // Eliminates one kernel launch + one full N-element read/write pass
+    // by computing sim * exp(-λ·age) in the same block that computes
+    // the dot product. Output goes directly to d_final.
     cudaEventRecord(ctx.e0, s);
     if (ctx.use_cublas && ctx.cublas_handle != nullptr && cfg.modality_filter < 0) {
-        // cuBLAS SGEMV — y = E^T * q  (E is N×D row-major)
-        // In cuBLAS column-major convention: E row-major = E^T col-major
-        // So we compute y = E^T_colmajor * q with op=CUBLAS_OP_T on
-        // the D×N col-major matrix (which is our N×D row-major E).
-        // cublasSgemv(handle, op, rows, cols, alpha, A, lda, x, incx, beta, y, incy)
-        // A is D×N in col-major (= N×D row-major), op=T => y(N) = A^T(N×D) * x(D)
+        // cuBLAS path: can't fuse, so do SGEMV + separate rerank
         float alpha = 1.0f, beta = 0.0f;
         cublasHandle_t handle = static_cast<cublasHandle_t>(ctx.cublas_handle);
         CUBLAS_CHECK(cublasSgemv(handle, CUBLAS_OP_T,
@@ -947,24 +1053,32 @@ static void launch_pipeline_kernels(
                                  dg.d_embeddings, D,
                                  ctx.d_query, 1,
                                  &beta, ctx.d_sim, 1));
+        if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
+        cudaEventRecord(ctx.e1, s);
+        int32_t blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        temporal_rerank_kernel<<<blocks, THREADS_PER_BLOCK, 0, s>>>(
+            ctx.d_sim, dg.d_timestamps, ctx.d_final,
+            N, query_timestamp, cfg.time_decay_lambda);
+        if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
     } else if (ctx.use_fp16 && dg.d_embeddings_fp16 != nullptr) {
-        cosine_similarity_fp16_kernel<<<N, THREADS_PER_BLOCK, 0, s>>>(
-            dg.d_embeddings_fp16, ctx.d_query, dg.d_modalities, ctx.d_sim,
-            N, D, cfg.modality_filter);
+        // Fused FP16 path — writes directly to d_final
+        cosine_similarity_fp16_fused_kernel<<<N, THREADS_PER_BLOCK, 0, s>>>(
+            dg.d_embeddings_fp16, ctx.d_query, dg.d_modalities,
+            dg.d_timestamps, ctx.d_final,
+            N, D, cfg.modality_filter,
+            query_timestamp, cfg.time_decay_lambda);
+        if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
+        cudaEventRecord(ctx.e1, s);  // e1 = e0 (stages fused)
     } else {
-        cosine_similarity_kernel<<<N, THREADS_PER_BLOCK, 0, s>>>(
-            dg.d_embeddings, ctx.d_query, dg.d_modalities, ctx.d_sim,
-            N, D, cfg.modality_filter);
+        // Fused FP32 path — writes directly to d_final
+        cosine_similarity_fused_kernel<<<N, THREADS_PER_BLOCK, 0, s>>>(
+            dg.d_embeddings, ctx.d_query, dg.d_modalities,
+            dg.d_timestamps, ctx.d_final,
+            N, D, cfg.modality_filter,
+            query_timestamp, cfg.time_decay_lambda);
+        if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
+        cudaEventRecord(ctx.e1, s);  // e1 = e0 (stages fused)
     }
-    if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
-
-    // ── STAGE 2: temporal rerank ─────────────────────────────────
-    cudaEventRecord(ctx.e1, s);
-    int32_t blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    temporal_rerank_kernel<<<blocks, THREADS_PER_BLOCK, 0, s>>>(
-        ctx.d_sim, dg.d_timestamps, ctx.d_final,
-        N, query_timestamp, cfg.time_decay_lambda);
-    if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
 
     // ── STAGE 3: top-K selection ──────────────────────────────────
     cudaEventRecord(ctx.e2, s);

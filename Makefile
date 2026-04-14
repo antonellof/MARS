@@ -193,6 +193,16 @@ bench-kids-iterate-refine-micro-1m: $(KIDS_SWEEP)
 		--iterate-n 1000000 --iterate-probes 128 \
 		--iterate-steps-dir results/iteration_steps/make_refine_micro_1m
 
+# Fill ~40 GiB VRAM (default): N from scripts/kids_ball_max_n_vram.py (≈13.2M nodes @ 768-D).
+# Requires comparable host DRAM (~38+ GiB embeddings during corpus build). Override: VRAM_GIB=80 make ...
+VRAM_GIB ?= 40
+bench-kids-vram-max-smoke: $(KIDS_SWEEP)
+	@N=$$(python3 scripts/kids_ball_max_n_vram.py --vram-gib $(VRAM_GIB) --reserve-mib 768 --print-n); \
+	mkdir -p results/iteration_steps/make_vram_max_smoke; \
+	echo "bench-kids-vram-max-smoke: VRAM_GIB=$(VRAM_GIB) N=$$N (see scripts/kids_ball_max_n_vram.py)"; \
+	$(KIDS_SWEEP) --boost-grid 0.24 --iterate-n $$N --iterate-probes 4 \
+		--iterate-steps-dir results/iteration_steps/make_vram_max_smoke
+
 bench-kids-export: $(KIDS_SWEEP)
 	@mkdir -p results
 	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768

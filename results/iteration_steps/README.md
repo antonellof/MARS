@@ -42,6 +42,25 @@ Or any N: `./demos/embodied_scene/bench_kids_sweep --boost-grid … --iterate-n 
 
 **Host RAM:** peak includes a full host copy of embeddings during `make()` and upload (~3 GiB at 1M); use a machine with sufficient **CPU RAM** (≥16 GiB free recommended for 1M).
 
+### Fill available VRAM (e.g. A100 40 GB)
+
+`scripts/kids_ball_max_n_vram.py` estimates the largest kids-ball **N** (768-D, NSN `k=6`, `p=0.15`) that fits a GPU budget including `QueryContext`, using the measured CSR degree **≈11.02**. Example for **40 GiB** card leaving **768 MiB** headroom:
+
+```bash
+python3 scripts/kids_ball_max_n_vram.py --vram-gib 40 --reserve-mib 768
+```
+
+One-shot smoke (default **0.24** boost, **4** probes — long **host** NSN build at ~13M nodes):
+
+```bash
+make bench-kids-vram-max-smoke
+# Other cards: VRAM_GIB=80 make bench-kids-vram-max-smoke
+```
+
+**Host DRAM:** at max **N** the FP32 embedding matrix alone is **~N×768×4** bytes (≈**38 GiB** at 40 GB-class **N**). The machine needs that headroom **before** `cudaMemcpy`.
+
+**Runtime:** NSN construction is CPU-heavy; very large **N** can take many minutes.
+
 - **`step_global_boost_<milli>.json`** — one file per boost value (milli = round(boost × 1000)).
 - **`step_episode_scoped.json`** — reference run (different retrieval contract).
 - **`SUMMARY.json` / `SUMMARY.md`** — best global boost under criterion  

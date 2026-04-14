@@ -180,9 +180,11 @@ int main(int argc, char** argv) {
         upload_episode_ids(dg, corp.episode_ids.data(), g.num_nodes);
         upload_episode_csr(dg, ep_csr);
 
+        // One context for all variants — avoids redundant cuBLAS/CUB allocation per variant.
+        QueryContext ctx = create_query_context(g.num_nodes, DIM, QUERY_CTX_MAX_K);
+
         for (size_t vi = 0; vi < sizeof(variants) / sizeof(variants[0]); ++vi) {
             const BenchVariant& bv = variants[vi];
-            QueryContext ctx = create_query_context(g.num_nodes, DIM, QUERY_CTX_MAX_K);
 
             RetrievalConfig cfg;
             cfg.top_k                = TOP_K;
@@ -239,8 +241,6 @@ int main(int argc, char** argv) {
                     ++hits_top15;
             }
 
-            destroy_query_context(ctx);
-
             SweepRow row;
             row.N = N;
             row.build_ms = build_ms;
@@ -260,6 +260,7 @@ int main(int argc, char** argv) {
                          row.episode_cross_modal_hit_rate_top15);
         }
 
+        destroy_query_context(ctx);
         free_device(dg);
     }
 

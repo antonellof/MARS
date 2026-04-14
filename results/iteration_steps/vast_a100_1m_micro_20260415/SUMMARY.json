@@ -1,0 +1,25 @@
+{
+  "tool": "mars-kids-boost-iterate",
+  "version": "1.2",
+  "iterate_n": 1000000,
+  "iterate_probes": 128,
+  "corpus_seed": 2026,
+  "criterion": "maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)",
+  "iterate_wall_ms_penalty": 0.000000,
+  "best_global_episode_same_boost": 0.245000,
+  "best_global_composite_score": 2.757812,
+  "best_global_ranking_score": 2.757812,
+  "best_global_step_file": "results/iteration_steps/make_refine_micro_1m/step_global_boost_245.json",
+  "episode_scoped_composite_score": 3.000000,
+  "episode_scoped_wall_p99_ms": 0.2116,
+  "episode_scoped_step_file": "results/iteration_steps/make_refine_micro_1m/step_episode_scoped.json",
+  "steps": [
+    {"boost":0.230000,"file":"results/iteration_steps/make_refine_micro_1m/step_global_boost_230.json","composite_score":2.687500,"ranking_score":2.687500,"wall_p99_ms":2.5376,"hit_top15":0.843750,"hit_compact":1.000000},
+    {"boost":0.240000,"file":"results/iteration_steps/make_refine_micro_1m/step_global_boost_240.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":2.5302,"hit_top15":0.828125,"hit_compact":0.976562},
+    {"boost":0.245000,"file":"results/iteration_steps/make_refine_micro_1m/step_global_boost_245.json","composite_score":2.757812,"ranking_score":2.757812,"wall_p99_ms":2.5561,"hit_top15":0.890625,"hit_compact":0.976562},
+    {"boost":0.250000,"file":"results/iteration_steps/make_refine_micro_1m/step_global_boost_250.json","composite_score":2.679688,"ranking_score":2.679688,"wall_p99_ms":2.5379,"hit_top15":0.843750,"hit_compact":0.992188},
+    {"boost":0.255000,"file":"results/iteration_steps/make_refine_micro_1m/step_global_boost_255.json","composite_score":2.679688,"ranking_score":2.679688,"wall_p99_ms":2.5433,"hit_top15":0.851562,"hit_compact":0.976562},
+    {"boost":0.260000,"file":"results/iteration_steps/make_refine_micro_1m/step_global_boost_260.json","composite_score":2.640625,"ranking_score":2.640625,"wall_p99_ms":2.5382,"hit_top15":0.820312,"hit_compact":1.000000},
+    {"boost":-1.000000,"file":"results/iteration_steps/make_refine_micro_1m/step_episode_scoped.json","composite_score":3.000000,"ranking_score":3.000000,"wall_p99_ms":0.2116,"hit_top15":1.000000,"hit_compact":1.000000}
+  ]
+}

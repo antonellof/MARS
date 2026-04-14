@@ -1,0 +1,12 @@
+{
+  "host": "ssh2.vast.ai",
+  "ssh_port": 19275,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "iterate_n": 1000000,
+  "iterate_probes": 128,
+  "boost_grid": "0.23,0.24,0.245,0.25,0.255,0.26",
+  "git_commit": "cb0937027f3da6fae32a7476b536534c31fbdd39",
+  "steps_dir_remote": "results/iteration_steps/make_refine_micro_1m",
+  "best_global_episode_same_boost": 0.245,
+  "note": "128 probes/boost (vs 256 at 10k runs). JSON file paths still reference remote make_refine_micro_1m/; artifacts in this folder match those steps."
+}

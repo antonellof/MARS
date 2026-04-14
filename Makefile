@@ -166,6 +166,33 @@ bench-kids-iterate-refine-micro-50k: $(KIDS_SWEEP)
 		--iterate-n 50000 --iterate-probes 256 \
 		--iterate-steps-dir results/iteration_steps/make_refine_micro_50k
 
+# 100k / 250k / 500k: same micro-grid as 10k–50k (one NSN build per make invocation).
+bench-kids-iterate-refine-micro-100k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_100k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 100000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_100k
+
+bench-kids-iterate-refine-micro-250k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_250k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 250000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_250k
+
+bench-kids-iterate-refine-micro-500k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_500k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 500000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_500k
+
+# 1M nodes (~3 GiB FP32 embeddings + NSN + query ctx): needs a high-VRAM GPU (e.g. A100 40GB+).
+# 128 probes/boost to keep wall time tractable; raise with --iterate-probes if you need tighter stats.
+bench-kids-iterate-refine-micro-1m: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_1m
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 1000000 --iterate-probes 128 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_1m
+
 bench-kids-export: $(KIDS_SWEEP)
 	@mkdir -p results
 	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768

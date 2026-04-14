@@ -25,14 +25,22 @@ mkdir -p results/iteration_steps/run_local
 
 Convenience: `make bench-kids-iterate`, `make bench-kids-iterate-refine`, `make bench-kids-iterate-refine-latency`, `make bench-kids-iterate-refine-micro`.
 
-**Larger corpora:** the default **0.24** was chosen at **N=10k**. Optimal `episode_same_boost` can shift as the NSN and candidate pool grow. Re-run the same micro-grid at **20k** / **50k**:
+**Larger corpora:** the default **0.24** was chosen at **N=10k**. Optimal `episode_same_boost` can shift as the NSN and candidate pool grow. Re-run the same micro-grid at larger **N**:
 
 ```bash
 make bench-kids-iterate-refine-micro-20k
 make bench-kids-iterate-refine-micro-50k
+make bench-kids-iterate-refine-micro-100k
+make bench-kids-iterate-refine-micro-250k
+make bench-kids-iterate-refine-micro-500k
+make bench-kids-iterate-refine-micro-1m
 ```
 
-Or any N: `./demos/embodied_scene/bench_kids_sweep --boost-grid … --iterate-n 50000 --iterate-steps-dir results/iteration_steps/my_50k_run`. `SUMMARY.json` records `iterate_n`, `iterate_probes`, and `corpus_seed`.
+**Up to N=1M:** `EmbodiedKidsBallCorpus` and the CUDA path use `int32_t` counts; **1M×768 FP32** embeddings are **~3 GiB** on device (plus CSR, episode arrays, and `QueryContext` scratch — still typically fine on **A100 40GB+**). Expect **minutes** for NSN host build and **long** iterate wall time unless you lower `--iterate-probes`. The `bench-kids-iterate-refine-micro-1m` target uses **128** probes per boost for that reason.
+
+Or any N: `./demos/embodied_scene/bench_kids_sweep --boost-grid … --iterate-n 1000000 --iterate-probes 64 --iterate-steps-dir results/iteration_steps/my_1m_run`. `SUMMARY.json` records `iterate_n`, `iterate_probes`, and `corpus_seed`.
+
+**Host RAM:** peak includes a full host copy of embeddings during `make()` and upload (~3 GiB at 1M); use a machine with sufficient **CPU RAM** (≥16 GiB free recommended for 1M).
 
 - **`step_global_boost_<milli>.json`** — one file per boost value (milli = round(boost × 1000)).
 - **`step_episode_scoped.json`** — reference run (different retrieval contract).

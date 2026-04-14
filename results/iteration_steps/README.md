@@ -13,6 +13,18 @@ mkdir -p results/iteration_steps/run_local
   --iterate-steps-dir results/iteration_steps/run_local
 ```
 
+**Latency-aware ranking** (maximize `composite - penalty * wall_p99_ms`):
+
+```bash
+./demos/embodied_scene/bench_kids_sweep \
+  --boost-grid 0.20,0.22,0.24,0.26,0.28,0.30 \
+  --iterate-n 10000 --iterate-probes 256 \
+  --iterate-wall-ms-penalty 1.0 \
+  --iterate-steps-dir results/iteration_steps/run_latency
+```
+
+Convenience: `make bench-kids-iterate`, `make bench-kids-iterate-refine`, `make bench-kids-iterate-refine-latency`.
+
 - **`step_global_boost_<milli>.json`** — one file per boost value (milli = round(boost × 1000)).
 - **`step_episode_scoped.json`** — reference run (different retrieval contract).
 - **`SUMMARY.json` / `SUMMARY.md`** — best global boost under criterion  

@@ -15,6 +15,8 @@
 //  Iteration / coarse grid (saves one JSON per boost + SUMMARY):
 //    ./bench_kids_sweep --boost-grid 0,0.15,0.25,0.35,0.5 --iterate-n 10000 \
 //        --iterate-steps-dir results/iteration_steps/my_run --iterate-probes 256
+//  Optional latency-aware ranking (pick best by composite - penalty * wall_p99_ms):
+//    ... --iterate-wall-ms-penalty 1.0
 //
 //  Binary corpus format (little-endian) for FAISS baseline scripts:
 //    uint32 magic 'KIDS' (0x5344494b)
@@ -128,9 +130,10 @@ std::vector<float> parse_boost_list(const char* s) {
 }
 
 // Returns 0 on success. Writes step_boost_<milli>.json per boost and SUMMARY.{json,md}.
+// If wall_ms_penalty > 0, best global step maximizes (composite - wall_ms_penalty * wall_p99_ms).
 int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int32_t grid_probes,
                            const char* steps_dir, int32_t dim, int32_t top_k, int32_t max_results_host,
-                           int32_t query_ctx_max_k, uint32_t corpus_seed) {
+                           int32_t query_ctx_max_k, uint32_t corpus_seed, double wall_ms_penalty) {
     if (boosts.empty()) {
         std::fprintf(stderr, "--boost-grid: empty list\n");
         return 1;
@@ -172,7 +175,8 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         double  kern_p99 = 0;
         double  hit_c = 0;
         double  hit_t15 = 0;
-        double  score = 0;
+        double  score = 0;        // 2*hit_top15 + hit_compact
+        double  ranking_score = 0; // score - wall_ms_penalty * wall_p99 (used for best if penalty>0)
     };
     std::vector<StepRec> steps;
     steps.reserve(boosts.size());
@@ -227,6 +231,7 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         rec.hit_c    = grid_probes > 0 ? double(hits_compact) / double(grid_probes) : 0.0;
         rec.hit_t15  = grid_probes > 0 ? double(hits_top15) / double(grid_probes) : 0.0;
         rec.score    = 2.0 * rec.hit_t15 + rec.hit_c;
+        rec.ranking_score = rec.score - wall_ms_penalty * rec.wall_p99;
 
         char fname[512];
         std::snprintf(fname, sizeof(fname), "%s/step_global_boost_%d.json",
@@ -249,13 +254,16 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         std::fprintf(fo, "  \"kernel_p99_ms\": %.4f,\n", rec.kern_p99);
         std::fprintf(fo, "  \"episode_cross_modal_hit_rate_compact\": %.6f,\n", rec.hit_c);
         std::fprintf(fo, "  \"episode_cross_modal_hit_rate_top15\": %.6f,\n", rec.hit_t15);
-        std::fprintf(fo, "  \"composite_score\": %.6f\n", rec.score);
+        std::fprintf(fo, "  \"composite_score\": %.6f,\n", rec.score);
+        std::fprintf(fo, "  \"ranking_score\": %.6f,\n", rec.ranking_score);
+        std::fprintf(fo, "  \"iterate_wall_ms_penalty\": %.6f\n", wall_ms_penalty);
         std::fprintf(fo, "}\n");
         std::fclose(fo);
         steps.push_back(rec);
-        std::fprintf(stderr, "[iterate] boost=%.3f -> score=%.4f wall_p99=%.3f kern_p99=%.3f "
+        std::fprintf(stderr, "[iterate] boost=%.3f -> comp=%.4f rank=%.4f wall_p99=%.3f kern_p99=%.3f "
                              "hit_c=%.3f hit_t15=%.3f -> %s\n",
-                     double(boost), rec.score, rec.wall_p99, rec.kern_p99, rec.hit_c, rec.hit_t15, fname);
+                     double(boost), rec.score, rec.ranking_score, rec.wall_p99, rec.kern_p99, rec.hit_c,
+                     rec.hit_t15, fname);
     }
 
     // Episode-scoped reference (same corpus / ctx)
@@ -311,6 +319,7 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         rec.hit_c    = grid_probes > 0 ? double(hits_compact) / double(grid_probes) : 0.0;
         rec.hit_t15  = grid_probes > 0 ? double(hits_top15) / double(grid_probes) : 0.0;
         rec.score    = 2.0 * rec.hit_t15 + rec.hit_c;
+        rec.ranking_score = rec.score - wall_ms_penalty * rec.wall_p99;
 
         char fname[512];
         std::snprintf(fname, sizeof(fname), "%s/step_episode_scoped.json", steps_dir);
@@ -332,24 +341,27 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         std::fprintf(fo, "  \"episode_cross_modal_hit_rate_compact\": %.6f,\n", rec.hit_c);
         std::fprintf(fo, "  \"episode_cross_modal_hit_rate_top15\": %.6f,\n", rec.hit_t15);
         std::fprintf(fo, "  \"composite_score\": %.6f,\n", rec.score);
+        std::fprintf(fo, "  \"ranking_score\": %.6f,\n", rec.ranking_score);
+        std::fprintf(fo, "  \"iterate_wall_ms_penalty\": %.6f,\n", wall_ms_penalty);
         std::fprintf(fo, "  \"note\": \"Different retrieval contract: rank within episode members only.\"\n");
         std::fprintf(fo, "}\n");
         std::fclose(fo);
         steps.push_back(rec);
-        std::fprintf(stderr, "[iterate] episode_scoped -> score=%.4f wall_p99=%.3f -> %s\n",
-                     rec.score, rec.wall_p99, fname);
+        std::fprintf(stderr, "[iterate] episode_scoped -> comp=%.4f rank=%.4f wall_p99=%.3f -> %s\n",
+                     rec.score, rec.ranking_score, rec.wall_p99, fname);
     }
 
     destroy_query_context(ctx);
     free_device(dg);
 
     size_t best_i = 0;
-    double best_score = -1.0;
+    double best_key = -1.0e300;
     for (size_t i = 0; i < steps.size(); ++i) {
         if (steps[i].boost < 0.f) continue;
-        if (steps[i].score > best_score) {
-            best_score = steps[i].score;
-            best_i     = i;
+        const double key = steps[i].ranking_score;
+        if (key > best_key) {
+            best_key = key;
+            best_i   = i;
         }
     }
 
@@ -370,10 +382,20 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
     }
     std::fprintf(fs, "{\n");
     std::fprintf(fs, "  \"tool\": \"mars-kids-boost-iterate\",\n");
-    std::fprintf(fs, "  \"version\": \"1.0\",\n");
-    std::fprintf(fs, "  \"criterion\": \"maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)\",\n");
+    std::fprintf(fs, "  \"version\": \"1.1\",\n");
+    if (wall_ms_penalty > 0.0) {
+        std::fprintf(fs,
+            "  \"criterion\": \"maximize ranking_score = 2*hit_top15 + hit_compact - %.6f * wall_p99_ms "
+            "(global boosts only)\",\n",
+            wall_ms_penalty);
+    } else {
+        std::fprintf(fs, "  \"criterion\": \"maximize composite_score = 2*hit_top15 + hit_compact (global "
+                         "boosts only)\",\n");
+    }
+    std::fprintf(fs, "  \"iterate_wall_ms_penalty\": %.6f,\n", wall_ms_penalty);
     std::fprintf(fs, "  \"best_global_episode_same_boost\": %.6f,\n", double(steps[best_i].boost));
     std::fprintf(fs, "  \"best_global_composite_score\": %.6f,\n", steps[best_i].score);
+    std::fprintf(fs, "  \"best_global_ranking_score\": %.6f,\n", steps[best_i].ranking_score);
     std::fprintf(fs, "  \"best_global_step_file\": \"%s\",\n", steps[best_i].file.c_str());
     if (scoped) {
         std::fprintf(fs, "  \"episode_scoped_composite_score\": %.6f,\n", scoped->score);
@@ -383,9 +405,9 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
     std::fprintf(fs, "  \"steps\": [\n");
     for (size_t i = 0; i < steps.size(); ++i) {
         std::fprintf(fs,
-            "    {\"boost\":%.6f,\"file\":\"%s\",\"composite_score\":%.6f,\"wall_p99_ms\":%.4f,"
-            "\"hit_top15\":%.6f,\"hit_compact\":%.6f}%s\n",
-            double(steps[i].boost), steps[i].file.c_str(), steps[i].score,
+            "    {\"boost\":%.6f,\"file\":\"%s\",\"composite_score\":%.6f,\"ranking_score\":%.6f,"
+            "\"wall_p99_ms\":%.4f,\"hit_top15\":%.6f,\"hit_compact\":%.6f}%s\n",
+            double(steps[i].boost), steps[i].file.c_str(), steps[i].score, steps[i].ranking_score,
             steps[i].wall_p99, steps[i].hit_t15, steps[i].hit_c,
             (i + 1 < steps.size()) ? "," : "");
     }
@@ -396,10 +418,18 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
     fs = std::fopen(sum_path, "w");
     if (fs) {
         std::fprintf(fs, "# Kids-ball iteration summary (N=%d)\n\n", grid_n);
-        std::fprintf(fs, "**Criterion:** maximize `2 * hit_top15 + hit_compact` over **global** episode boosts.\n\n");
+        if (wall_ms_penalty > 0.0) {
+            std::fprintf(fs, "**Criterion:** maximize `ranking_score = 2*hit_top15 + hit_compact - %.4f "
+                             "* wall_p99_ms` over **global** episode boosts.\n\n",
+                         wall_ms_penalty);
+        } else {
+            std::fprintf(fs, "**Criterion:** maximize `2 * hit_top15 + hit_compact` over **global** episode "
+                             "boosts.\n\n");
+        }
         std::fprintf(fs, "## Best global boost\n\n");
         std::fprintf(fs, "- **episode_same_boost:** %.4f\n", double(steps[best_i].boost));
         std::fprintf(fs, "- **composite_score:** %.4f\n", steps[best_i].score);
+        std::fprintf(fs, "- **ranking_score:** %.4f\n", steps[best_i].ranking_score);
         std::fprintf(fs, "- **wall p99 (ms):** %.4f\n", steps[best_i].wall_p99);
         std::fprintf(fs, "- **Artifact:** `%s`\n\n", steps[best_i].file.c_str());
         if (scoped) {
@@ -411,9 +441,15 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
                 std::fprintf(fs, "**Latency:** episode-scoped is materially faster at this N (subset similarity).\n\n");
         }
         std::fprintf(fs, "## Recommendation\n\n");
-        std::fprintf(fs, "For **open-world** global memory, set `RetrievalConfig::episode_same_boost` to **%.3f** "
-                         "if optimizing the stated composite at N=%d.\n",
-                     double(steps[best_i].boost), grid_n);
+        if (wall_ms_penalty > 0.0) {
+            std::fprintf(fs, "For **open-world** global memory, set `RetrievalConfig::episode_same_boost` to "
+                             "**%.3f** if optimizing the **ranking** criterion (with wall-ms penalty) at N=%d.\n",
+                         double(steps[best_i].boost), grid_n);
+        } else {
+            std::fprintf(fs, "For **open-world** global memory, set `RetrievalConfig::episode_same_boost` to "
+                             "**%.3f** if optimizing the stated composite at N=%d.\n",
+                         double(steps[best_i].boost), grid_n);
+        }
         std::fprintf(fs, "For **session-local** UX metrics, prefer `RetrievalScope::EpisodeScoped` and label "
                          "benchmarks accordingly.\n");
         std::fclose(fs);
@@ -441,6 +477,7 @@ int main(int argc, char** argv) {
     const char* iterate_steps_dir = nullptr;
     int32_t      iterate_n       = 10000;
     int32_t      iterate_probes  = NUM_PROBES;
+    double       iterate_wall_ms_penalty = 0.0;
 
     const BenchVariant variants[] = {
         {"global_baseline", RetrievalScope::Global, 0.0f},
@@ -473,6 +510,9 @@ int main(int argc, char** argv) {
             iterate_n = std::max(10, std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--iterate-probes") == 0 && i + 1 < argc) {
             iterate_probes = std::max(16, std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--iterate-wall-ms-penalty") == 0 && i + 1 < argc) {
+            iterate_wall_ms_penalty = std::strtod(argv[++i], nullptr);
+            if (iterate_wall_ms_penalty < 0.0) iterate_wall_ms_penalty = 0.0;
         } else if (argv[i][0] != '-') {
             out_path = argv[i];
         }
@@ -491,7 +531,8 @@ int main(int argc, char** argv) {
         const char* sd =
             iterate_steps_dir ? iterate_steps_dir : "results/iteration_steps/latest";
         return run_boost_iterate_mode(bl, iterate_n, iterate_probes, sd, DIM, TOP_K,
-                                      MAX_RESULTS_HOST, QUERY_CTX_MAX_K, CORPUS_SEED);
+                                      MAX_RESULTS_HOST, QUERY_CTX_MAX_K, CORPUS_SEED,
+                                      iterate_wall_ms_penalty);
     }
 
     std::vector<std::vector<SweepRow>> rows_by_variant;

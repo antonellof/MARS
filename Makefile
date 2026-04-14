@@ -132,6 +132,20 @@ bench-kids-iterate: $(KIDS_SWEEP)
 		--iterate-n 10000 --iterate-probes 256 \
 		--iterate-steps-dir results/iteration_steps/make_default
 
+# Second-stage refine around prior optimum (~0.25) at N=10k
+bench-kids-iterate-refine: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine
+	$(KIDS_SWEEP) --boost-grid 0.20,0.22,0.24,0.26,0.28,0.30 \
+		--iterate-n 10000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine
+
+# Same refine grid but pick best by (composite - penalty * wall_p99_ms)
+bench-kids-iterate-refine-latency: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_latency
+	$(KIDS_SWEEP) --boost-grid 0.20,0.22,0.24,0.26,0.28,0.30 \
+		--iterate-n 10000 --iterate-probes 256 --iterate-wall-ms-penalty 1.0 \
+		--iterate-steps-dir results/iteration_steps/make_refine_latency
+
 bench-kids-export: $(KIDS_SWEEP)
 	@mkdir -p results
 	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768

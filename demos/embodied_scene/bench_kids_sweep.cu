@@ -270,7 +270,7 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         cfg.retrieval_scope      = RetrievalScope::EpisodeScoped;
         cfg.episode_same_boost   = 0.0f;
 
-        std::mt19937 rng(uint32_t(grid_n) ^ 0x5C0Pu);
+        std::mt19937 rng(uint32_t(grid_n) ^ 0x5C0DC0Du);
         std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
         std::vector<double> wall_ms, kern_ms;
         wall_ms.reserve(size_t(grid_probes));

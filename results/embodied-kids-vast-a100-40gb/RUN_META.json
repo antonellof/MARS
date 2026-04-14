@@ -1,0 +1,14 @@
+{
+  "host": "ssh8.vast.ai",
+  "ssh_port": 17155,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "cuda_runtime_version": 12080,
+  "branch": "feature/embodied-kids-ball-benchmark",
+  "snapshot_date": "2026-04-14",
+  "files": [
+    "mars_sweep.json",
+    "faiss_baseline.json",
+    "demo_run.json",
+    "kids_corpus_10k.bin"
+  ]
+}

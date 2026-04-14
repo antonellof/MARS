@@ -54,6 +54,8 @@ env/
 # NOT be committed — they are user-specific.
 results.json
 results_*.json
+# Large binary corpus dumps (keep JSON + ANALYSIS in git)
+results/embodied-kids-vast*/**/*.bin
 benchmarks/*/results_*.json
 benchmarks/*/data/
 

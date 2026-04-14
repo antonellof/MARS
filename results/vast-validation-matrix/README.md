@@ -13,7 +13,12 @@ make bench-kids-iterate
   --iterate-steps-dir results/iteration_steps/my_run
 ```
 
-See `SUMMARY.md` in the steps directory. Measured A100 run: [vast_a100_20260414/SUMMARY.md](../iteration_steps/vast_a100_20260414/SUMMARY.md).
+See `SUMMARY.md` in the steps directory. Measured A100 runs:
+
+- Coarse grid: [vast_a100_20260414/SUMMARY.md](../iteration_steps/vast_a100_20260414/SUMMARY.md)
+- Refine 0.20–0.30: [vast_a100_refine2/SUMMARY.md](../iteration_steps/vast_a100_refine2/SUMMARY.md)
+- Refine + latency penalty (×1 ms): [vast_a100_refine2_latency/SUMMARY.md](../iteration_steps/vast_a100_refine2_latency/SUMMARY.md)
+- Micro 0.23–0.26 (includes 0.25): [vast_a100_refine3/SUMMARY.md](../iteration_steps/vast_a100_refine3/SUMMARY.md) — **best global boost 0.24** (demo default)
 
 ## Core sweep (MARS)
 
@@ -28,7 +33,7 @@ make tests
 | Variant | Meaning |
 |---------|---------|
 | `global_baseline` | Full `N` similarity + temporal + cuBLAS/CUB + BFS (default). |
-| `global_episode_boost_0.35` | Same + `episode_same_boost=0.35` for nodes in the probe episode. |
+| `global_episode_boost_0.24` | Same + `episode_same_boost=0.24` for nodes in the probe episode (tuned on A100, see `iteration_steps/`). |
 | `episode_scoped_no_bfs` | Similarity + decay **only** over members of the probe episode (`O(M·D)`); **BFS hops = 0**. |
 
 ## Optional rows (extend matrix)

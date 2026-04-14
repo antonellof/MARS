@@ -1,0 +1,13 @@
+{
+  "host": "ssh4.vast.ai",
+  "ssh_port": 13539,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "iterate_n": 10000,
+  "iterate_probes": 256,
+  "boost_grid": "0.20,0.22,0.24,0.26,0.28,0.30",
+  "iterate_wall_ms_penalty": 1.0,
+  "git_commit": "97078c193c76680dba02cd714b197b67d8f0bb3f",
+  "steps_dir": "results/iteration_steps/vast_a100_refine2_latency",
+  "best_global_episode_same_boost": 0.24,
+  "note": "Same grid as vast_a100_refine2; ranking_score = composite - wall_p99_ms."
+}

@@ -1,0 +1,22 @@
+{
+  "tool": "mars-kids-boost-iterate",
+  "version": "1.1",
+  "criterion": "maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)",
+  "iterate_wall_ms_penalty": 0.000000,
+  "best_global_episode_same_boost": 0.240000,
+  "best_global_composite_score": 2.726562,
+  "best_global_ranking_score": 2.726562,
+  "best_global_step_file": "results/iteration_steps/vast_a100_refine2/step_global_boost_240.json",
+  "episode_scoped_composite_score": 3.000000,
+  "episode_scoped_wall_p99_ms": 0.1569,
+  "episode_scoped_step_file": "results/iteration_steps/vast_a100_refine2/step_episode_scoped.json",
+  "steps": [
+    {"boost":0.200000,"file":"results/iteration_steps/vast_a100_refine2/step_global_boost_200.json","composite_score":2.617188,"ranking_score":2.617188,"wall_p99_ms":0.2899,"hit_top15":0.812500,"hit_compact":0.992188},
+    {"boost":0.220000,"file":"results/iteration_steps/vast_a100_refine2/step_global_boost_220.json","composite_score":2.667969,"ranking_score":2.667969,"wall_p99_ms":0.2841,"hit_top15":0.839844,"hit_compact":0.988281},
+    {"boost":0.240000,"file":"results/iteration_steps/vast_a100_refine2/step_global_boost_240.json","composite_score":2.726562,"ranking_score":2.726562,"wall_p99_ms":0.2798,"hit_top15":0.863281,"hit_compact":1.000000},
+    {"boost":0.260000,"file":"results/iteration_steps/vast_a100_refine2/step_global_boost_260.json","composite_score":2.699219,"ranking_score":2.699219,"wall_p99_ms":0.2566,"hit_top15":0.855469,"hit_compact":0.988281},
+    {"boost":0.280000,"file":"results/iteration_steps/vast_a100_refine2/step_global_boost_280.json","composite_score":2.605469,"ranking_score":2.605469,"wall_p99_ms":0.2541,"hit_top15":0.812500,"hit_compact":0.980469},
+    {"boost":0.300000,"file":"results/iteration_steps/vast_a100_refine2/step_global_boost_300.json","composite_score":2.539062,"ranking_score":2.539062,"wall_p99_ms":0.2507,"hit_top15":0.781250,"hit_compact":0.976562},
+    {"boost":-1.000000,"file":"results/iteration_steps/vast_a100_refine2/step_episode_scoped.json","composite_score":3.000000,"ranking_score":3.000000,"wall_p99_ms":0.1569,"hit_top15":1.000000,"hit_compact":1.000000}
+  ]
+}

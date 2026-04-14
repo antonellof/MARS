@@ -23,7 +23,7 @@
     {
       "label": "global_episode_boost_N10000",
       "N": 10000,
-      "variant": "global_episode_boost_0.35",
+      "variant": "global_episode_boost_0.24",
       "wall_p99_ms_measured": null,
       "kernel_p99_ms_measured": null,
       "episode_hit_compact_measured": null,

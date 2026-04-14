@@ -481,7 +481,7 @@ int main(int argc, char** argv) {
 
     const BenchVariant variants[] = {
         {"global_baseline", RetrievalScope::Global, 0.0f},
-        {"global_episode_boost_0.25", RetrievalScope::Global, 0.25f},
+        {"global_episode_boost_0.24", RetrievalScope::Global, 0.24f},
         {"episode_scoped_no_bfs", RetrievalScope::EpisodeScoped, 0.0f},
     };
 

@@ -19,5 +19,7 @@
 
 ## Recommendation
 
-For **open-world** global memory, set `RetrievalConfig::episode_same_boost` to **0.250** if optimizing the stated composite at N=10000.
+For **open-world** global memory, set `RetrievalConfig::episode_same_boost` to **0.250** if optimizing the stated composite at N=10000 **on this coarse grid only**.
 For **session-local** UX metrics, prefer `RetrievalScope::EpisodeScoped` and label benchmarks accordingly.
+
+**Note:** A finer grid that includes **0.24** and **0.25** (`../vast_a100_refine3/SUMMARY.md`) prefers **0.24** for the same composite at the same N/probes; `demos/embodied_scene/demo.cu` follows that refine result.

@@ -146,6 +146,13 @@ bench-kids-iterate-refine-latency: $(KIDS_SWEEP)
 		--iterate-n 10000 --iterate-probes 256 --iterate-wall-ms-penalty 1.0 \
 		--iterate-steps-dir results/iteration_steps/make_refine_latency
 
+# Third pass: include 0.25 between 0.24 and 0.26 (saved hardware: vast_a100_refine3/)
+bench-kids-iterate-refine-micro: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 10000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro
+
 bench-kids-export: $(KIDS_SWEEP)
 	@mkdir -p results
 	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768

@@ -869,7 +869,13 @@ query_memory(const DeviceMemoryGraph& dg,
     }
     std::sort(results.begin(), results.end(),
               [](const QueryResult& a, const QueryResult& b) { return a.score > b.score; });
-    if (static_cast<int32_t>(results.size()) > K) results.resize(K);
+    {
+        const int32_t nret = static_cast<int32_t>(results.size());
+        const int32_t cap = (cfg.max_results_returned > 0)
+            ? std::min(cfg.max_results_returned, nret)
+            : std::min(K, nret);
+        if (nret > cap) results.resize(static_cast<size_t>(cap));
+    }
 
     // ── Timings ──────────────────────────────────────────────────
     cudaEventElapsedTime(&stats.gpu_ms_similarity, e0, e1);
@@ -1257,7 +1263,13 @@ query_memory_fast(const DeviceMemoryGraph& dg,
     }
     std::sort(results.begin(), results.end(),
               [](const QueryResult& a, const QueryResult& b) { return a.score > b.score; });
-    if (static_cast<int32_t>(results.size()) > K) results.resize(K);
+    {
+        const int32_t nret = static_cast<int32_t>(results.size());
+        const int32_t cap = (cfg.max_results_returned > 0)
+            ? std::min(cfg.max_results_returned, nret)
+            : std::min(K, nret);
+        if (nret > cap) results.resize(static_cast<size_t>(cap));
+    }
 
     // ── Timings ──────────────────────────────────────────────────
     cudaEventElapsedTime(&stats.gpu_ms_similarity, ctx.e0, ctx.e1);

@@ -253,7 +253,7 @@ EmbodiedKidsBallCorpus EmbodiedKidsBallCorpus::make(int32_t n_nodes, int32_t dim
 
         float* row = &g.embeddings[static_cast<size_t>(i) * dim];
         for (int32_t d = 0; d < dim; ++d)
-            row[d] = proto[d] + 0.42f * slot_dir[slot][d] + N01(rng) * 0.07f;
+            row[d] = proto[d] + 0.50f * slot_dir[slot][d] + N01(rng) * 0.05f;
         l2_normalize_row(row, dim);
     }
 

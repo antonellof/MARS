@@ -6,11 +6,10 @@ Expects the same layout as demos/embodied_scene/bench_kids_sweep --dump-only:
   magic 'KIDS' (uint32 LE 0x5344494b), version=1, N, D, embeddings, timestamps,
   modalities, episode_ids.
 
-IMPORTANT (thesis guardrail): FAISS returns cosine inner-product neighbors only.
-It does not run MARS temporal rerank or NSN BFS. episode_cross_modal_hit_rate
-here measures whether *those* top-K neighbors span TEXT+AUDIO in the *same
-episode* as the query image node — a multimodal co-retrieval diagnostic, not
-equivalent to the full MARS pipeline.
+IMPORTANT (thesis guardrail): FAISS returns cosine inner-product neighbors only
+(no MARS temporal rerank or NSN BFS). Use --search-k aligned with MARS
+max_results_returned (e.g. 96) for a comparable episode window; we also report
+episode_cross_modal_hit_rate_top15 for the strict first-15 slice.
 
 Usage:
   pip install faiss-gpu numpy
@@ -79,7 +78,7 @@ def episode_cross_modal_hit(mod: np.ndarray, epi: np.ndarray, result_ids: np.nda
 
 
 def run_flat(emb: np.ndarray, mod: np.ndarray, epi: np.ndarray, img_idx: np.ndarray,
-             num_queries: int, top_k: int, seed: int) -> dict:
+             num_queries: int, search_k: int, seed: int) -> dict:
     N, D = emb.shape
     rng = np.random.RandomState(seed)
     qix = rng.choice(img_idx, size=num_queries, replace=True)
@@ -90,36 +89,40 @@ def run_flat(emb: np.ndarray, mod: np.ndarray, epi: np.ndarray, img_idx: np.ndar
     gpu_index = faiss.index_cpu_to_gpu(res, 0, index_flat)
     gpu_index.add(emb)
 
-    gpu_index.search(queries[: min(10, len(queries))], top_k)
+    gpu_index.search(queries[: min(10, len(queries))], search_k)
 
     lats: list = []
-    hits = 0
+    hits_sk = 0
+    hits_15 = 0
     for i in range(len(queries)):
         q = queries[i : i + 1]
         t0 = time.perf_counter()
-        _, I = gpu_index.search(q, top_k)
+        _, I = gpu_index.search(q, search_k)
         t1 = time.perf_counter()
         lats.append((t1 - t0) * 1000.0)
         ep = int(epi[qix[i]])
-        if episode_cross_modal_hit(mod, epi, I[0], ep, top_k):
-            hits += 1
+        if episode_cross_modal_hit(mod, epi, I[0], ep, search_k):
+            hits_sk += 1
+        if episode_cross_modal_hit(mod, epi, I[0], ep, 15):
+            hits_15 += 1
 
     return {
         "method": "faiss_flat_gpu_cosine_only",
         "N": int(N),
         "D": int(D),
-        "K": top_k,
+        "search_k": search_k,
         "num_queries": num_queries,
         "p50_ms": percentile_ms(lats, 50),
         "p99_ms": percentile_ms(lats, 99),
         "mean_ms": float(np.mean(lats)),
         "max_ms": float(np.max(lats)),
-        "episode_cross_modal_hit_rate": hits / max(1, num_queries),
+        "episode_cross_modal_hit_rate": hits_sk / max(1, num_queries),
+        "episode_cross_modal_hit_rate_top15": hits_15 / max(1, num_queries),
     }
 
 
 def run_ivf(emb: np.ndarray, mod: np.ndarray, epi: np.ndarray, img_idx: np.ndarray,
-            num_queries: int, top_k: int, seed: int) -> dict | None:
+            num_queries: int, search_k: int, seed: int) -> dict | None:
     N, D = emb.shape
     if N < 1000:
         return None
@@ -135,7 +138,7 @@ def run_ivf(emb: np.ndarray, mod: np.ndarray, epi: np.ndarray, img_idx: np.ndarr
     gt = faiss.IndexFlatIP(D)
     gt_gpu = faiss.index_cpu_to_gpu(res_gt, 0, gt)
     gt_gpu.add(emb)
-    _, gt_ids = gt_gpu.search(queries, top_k)
+    _, gt_ids = gt_gpu.search(queries, search_k)
     del gt_gpu, gt, res_gt
 
     res = faiss.StandardGpuResources()
@@ -146,28 +149,31 @@ def run_ivf(emb: np.ndarray, mod: np.ndarray, epi: np.ndarray, img_idx: np.ndarr
     gpu_index.add(emb)
     faiss.GpuParameterSpace().set_index_parameter(gpu_index, "nprobe", nprobe)
 
-    gpu_index.search(queries[: min(10, len(queries))], top_k)
+    gpu_index.search(queries[: min(10, len(queries))], search_k)
 
     lats: list = []
-    hits = 0
+    hits_sk = 0
+    hits_15 = 0
     recalls = []
     for i in range(len(queries)):
         q = queries[i : i + 1]
         t0 = time.perf_counter()
-        _, I = gpu_index.search(q, top_k)
+        _, I = gpu_index.search(q, search_k)
         t1 = time.perf_counter()
         lats.append((t1 - t0) * 1000.0)
         gt_set = set(gt_ids[i].tolist())
         recalls.append(len(gt_set & set(I[0].tolist())) / max(1, len(gt_set)))
         ep = int(epi[qix[i]])
-        if episode_cross_modal_hit(mod, epi, I[0], ep, top_k):
-            hits += 1
+        if episode_cross_modal_hit(mod, epi, I[0], ep, search_k):
+            hits_sk += 1
+        if episode_cross_modal_hit(mod, epi, I[0], ep, 15):
+            hits_15 += 1
 
     return {
         "method": "faiss_ivf_gpu_cosine_only",
         "N": int(N),
         "D": int(D),
-        "K": top_k,
+        "search_k": search_k,
         "nlist": nlist,
         "nprobe": nprobe,
         "num_queries": num_queries,
@@ -176,7 +182,8 @@ def run_ivf(emb: np.ndarray, mod: np.ndarray, epi: np.ndarray, img_idx: np.ndarr
         "mean_ms": float(np.mean(lats)),
         "max_ms": float(np.max(lats)),
         "recall_at_k_vs_flat": float(np.mean(recalls)),
-        "episode_cross_modal_hit_rate": hits / max(1, num_queries),
+        "episode_cross_modal_hit_rate": hits_sk / max(1, num_queries),
+        "episode_cross_modal_hit_rate_top15": hits_15 / max(1, num_queries),
     }
 
 
@@ -184,9 +191,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True, help="Path to kids corpus .bin")
     ap.add_argument("--queries", type=int, default=256)
-    ap.add_argument("--top-k", type=int, default=15)
+    ap.add_argument("--search-k", type=int, default=96,
+                    help="FAISS neighbors to retrieve (align with MARS max_results_returned)")
+    ap.add_argument("--top-k", type=int, default=None,
+                    help="Deprecated: if set, overrides --search-k")
     ap.add_argument("--seed", type=int, default=914)
     args = ap.parse_args()
+    search_k = args.search_k if args.top_k is None else args.top_k
 
     if faiss.get_num_gpus() < 1:
         print("ERROR: No FAISS GPU", file=sys.stderr)
@@ -202,12 +213,13 @@ def main():
         "tool": "bench_kids_ball_faiss",
         "corpus_path": args.corpus,
         "note": "Cosine-only vector search; compare latency to MARS sweep JSON; "
-                "episode_hit is diagnostic on flat neighbors, not BFS-expanded.",
+                "episode_hit uses search_k-wide neighbors; not BFS-expanded.",
+        "search_k": search_k,
         "configurations": [],
     }
     out["configurations"].append(
-        run_flat(emb, mod, epi, img_idx, args.queries, args.top_k, args.seed))
-    ivf = run_ivf(emb, mod, epi, img_idx, args.queries, args.top_k, args.seed)
+        run_flat(emb, mod, epi, img_idx, args.queries, search_k, args.seed))
+    ivf = run_ivf(emb, mod, epi, img_idx, args.queries, search_k, args.seed)
     if ivf:
         out["configurations"].append(ivf)
 

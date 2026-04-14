@@ -24,6 +24,9 @@
 //        This is what makes the system fast — instead of scanning all N
 //        memories, we only "light up" the neighborhood of hot seeds.
 //
+//  Host-side truncation: RetrievalConfig::max_results_returned can return
+//  more than top_k sorted compact results (seeds still use top_k).
+//
 //  FP16 support:
 //    - FP16 similarity kernel (opt-in via ctx.use_fp16)
 //    - CUDA graph capture/replay (opt-in via ctx.use_cuda_graph)
@@ -96,6 +99,10 @@ struct RetrievalConfig {
     float   bfs_score_decay   = 0.5f;   // per-hop score multiplier
     int32_t modality_filter   = -1;     // -1 = any
     bool    use_importance    = false;   // multiply by importance weight
+    // After BFS compaction, host keeps up to this many sorted results (default:
+    // use top_k only). Set > top_k to score cross-modal hits over the full
+    // compacted set without changing seed count (still min(top_k, ctx.max_k)).
+    int32_t max_results_returned = -1;
 };
 
 struct RetrievalStats {

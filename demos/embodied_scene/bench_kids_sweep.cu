@@ -2,7 +2,8 @@
 //  bench_kids_sweep.cu — MARS scaling benchmark on embodied kids-ball corpus.
 //
 //  Sweeps corpus size N, measures wall + kernel p99, build_ms, and
-//  episode_cross_modal_hit_rate (IMAGE query → same-episode TEXT+AUDIO in top-K).
+//  same-episode cross-modal hit rate on the compacted rank window (see
+//  RetrievalConfig::max_results_returned) plus strict top-15 for comparison.
 //
 //  Usage:
 //    ./bench_kids_sweep [out.json]
@@ -88,7 +89,8 @@ struct SweepRow {
     double  build_ms = 0;
     double  wall_p99_ms = 0;
     double  kernel_p99_ms = 0;
-    double  episode_cross_modal_hit_rate = 0;
+    double  episode_cross_modal_hit_rate_compact = 0;
+    double  episode_cross_modal_hit_rate_top15   = 0;
 };
 
 } // namespace
@@ -96,6 +98,8 @@ struct SweepRow {
 int main(int argc, char** argv) {
     const int32_t DIM = 768;
     const int32_t TOP_K = 15;
+    const int32_t MAX_RESULTS_HOST = 96;
+    const int32_t QUERY_CTX_MAX_K  = 64;
     const int32_t NUM_PROBES = 256;
     const uint32_t CORPUS_SEED = 2026u;
 
@@ -156,14 +160,15 @@ int main(int argc, char** argv) {
         }
 
         DeviceMemoryGraph dg = upload_to_device(g);
-        QueryContext ctx = create_query_context(g.num_nodes, DIM, TOP_K);
+        QueryContext ctx = create_query_context(g.num_nodes, DIM, QUERY_CTX_MAX_K);
 
         RetrievalConfig cfg;
-        cfg.top_k             = TOP_K;
-        cfg.bfs_max_hops      = 2;
-        cfg.time_decay_lambda = 8e-6f;
-        cfg.bfs_score_decay   = 0.55f;
-        cfg.modality_filter   = -1;
+        cfg.top_k                = TOP_K;
+        cfg.max_results_returned = MAX_RESULTS_HOST;
+        cfg.bfs_max_hops         = 2;
+        cfg.time_decay_lambda    = 8e-6f;
+        cfg.bfs_score_decay      = 0.55f;
+        cfg.modality_filter      = -1;
 
         std::mt19937 rng(uint32_t(N) ^ 0xA5A5A5A5u);
         std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
@@ -172,7 +177,8 @@ int main(int argc, char** argv) {
         std::vector<double> kern_ms;
         wall_ms.reserve(NUM_PROBES);
         kern_ms.reserve(NUM_PROBES);
-        int32_t hits = 0;
+        int32_t hits_compact = 0;
+        int32_t hits_top15   = 0;
 
         for (int32_t p = 0; p < NUM_PROBES; ++p) {
             const int32_t node = image_nodes[pick(rng)];
@@ -190,9 +196,12 @@ int main(int argc, char** argv) {
                 std::chrono::duration<double, std::milli>(t1 - t0).count());
             kern_ms.push_back(double(stats.gpu_ms_total));
 
-            if (episode_cross_modal_hit(res, corp.episode_ids[node],
-                                        corp.episode_ids, TOP_K))
-                ++hits;
+            const int32_t ep = corp.episode_ids[node];
+            const int32_t wfull = static_cast<int32_t>(res.size());
+            if (episode_cross_modal_hit(res, ep, corp.episode_ids, wfull))
+                ++hits_compact;
+            if (episode_cross_modal_hit(res, ep, corp.episode_ids, TOP_K))
+                ++hits_top15;
         }
 
         destroy_query_context(ctx);
@@ -203,13 +212,18 @@ int main(int argc, char** argv) {
         row.build_ms = build_ms;
         row.wall_p99_ms = percentile_p99(wall_ms);
         row.kernel_p99_ms = percentile_p99(kern_ms);
-        row.episode_cross_modal_hit_rate =
-            NUM_PROBES > 0 ? double(hits) / double(NUM_PROBES) : 0.0;
+        row.episode_cross_modal_hit_rate_compact =
+            NUM_PROBES > 0 ? double(hits_compact) / double(NUM_PROBES) : 0.0;
+        row.episode_cross_modal_hit_rate_top15 =
+            NUM_PROBES > 0 ? double(hits_top15) / double(NUM_PROBES) : 0.0;
         rows.push_back(row);
 
-        std::fprintf(stderr, "N=%7d  build=%.1f ms  wall_p99=%.3f  kern_p99=%.3f  ep_hit=%.3f\n",
+        std::fprintf(stderr,
+                     "N=%7d  build=%.1f ms  wall_p99=%.3f  kern_p99=%.3f  "
+                     "ep_hit_compact=%.3f ep_hit_top15=%.3f\n",
                      N, build_ms, row.wall_p99_ms, row.kernel_p99_ms,
-                     row.episode_cross_modal_hit_rate);
+                     row.episode_cross_modal_hit_rate_compact,
+                     row.episode_cross_modal_hit_rate_top15);
     }
 
     FILE* fo = std::fopen(out_path, "w");
@@ -219,11 +233,14 @@ int main(int argc, char** argv) {
     }
     std::fprintf(fo, "{\n");
     std::fprintf(fo, "  \"tool\": \"mars-kids-ball-sweep\",\n");
-    std::fprintf(fo, "  \"version\": \"1.0\",\n");
+    std::fprintf(fo, "  \"version\": \"1.1\",\n");
     std::fprintf(fo, "  \"note\": \"MARS full pipeline (temporal + cuBLAS/CUB + BFS). "
-                     "FAISS baselines use scripts/bench_kids_ball_faiss.py on --dump-corpus output.\",\n");
+                     "episode_cross_modal_hit_rate_compact scans up to max_results_returned "
+                     "sorted compact results (graph-aligned). top15 is the strict first-15 slice. "
+                     "FAISS: scripts/bench_kids_ball_faiss.py --search-k should match for fair episode comparison.\",\n");
     std::fprintf(fo, "  \"embedding_dim\": %d,\n", DIM);
     std::fprintf(fo, "  \"top_k\": %d,\n", TOP_K);
+    std::fprintf(fo, "  \"max_results_returned\": %d,\n", MAX_RESULTS_HOST);
     std::fprintf(fo, "  \"num_probes_per_n\": %d,\n", NUM_PROBES);
     std::fprintf(fo, "  \"corpus_seed\": %u,\n", CORPUS_SEED);
     std::fprintf(fo, "  \"configurations\": [\n");
@@ -234,8 +251,10 @@ int main(int argc, char** argv) {
         std::fprintf(fo, "      \"build_ms\": %.3f,\n", r.build_ms);
         std::fprintf(fo, "      \"wall_p99_ms\": %.4f,\n", r.wall_p99_ms);
         std::fprintf(fo, "      \"kernel_p99_ms\": %.4f,\n", r.kernel_p99_ms);
-        std::fprintf(fo, "      \"episode_cross_modal_hit_rate\": %.4f\n",
-                     r.episode_cross_modal_hit_rate);
+        std::fprintf(fo, "      \"episode_cross_modal_hit_rate_compact\": %.4f,\n",
+                     r.episode_cross_modal_hit_rate_compact);
+        std::fprintf(fo, "      \"episode_cross_modal_hit_rate_top15\": %.4f\n",
+                     r.episode_cross_modal_hit_rate_top15);
         std::fprintf(fo, "    }%s\n", (i + 1 < rows.size()) ? "," : "");
     }
     std::fprintf(fo, "  ]\n}\n");

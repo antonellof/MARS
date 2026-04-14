@@ -17,5 +17,5 @@
     "./demos/embodied_scene/bench_kids_sweep results/embodied-kids-vast-ssh4-20260414/mars_sweep_v12.json",
     "./validate 10000 768 (head only)"
   ],
-  "notes": "bench_kids_sweep v1.2: three variants per N (global_baseline, global_episode_boost_0.35, episode_scoped_no_bfs). First run used per-variant QueryContext; follow-up commit shares one context per N."
+  "notes": "bench_kids_sweep v1.2: three variants per N (global_baseline, global_episode_boost_0.35, episode_scoped_no_bfs). Vast run used per-variant QueryContext (commit c2e49fe). Later commits: shared QueryContext per N; make clean no longer deletes results/."
 }

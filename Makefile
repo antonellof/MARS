@@ -468,4 +468,3 @@ clean:
 	rm -f memory_engine validate latency_bench engine_server bench_tiled
 	rm -f $(DEMO_BINS) $(KIDS_SWEEP)
 	rm -f tests/run_tests
-	rm -rf results/

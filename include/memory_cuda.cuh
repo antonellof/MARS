@@ -70,6 +70,13 @@ struct DeviceMemoryGraph {
     half*    d_embeddings_fp16 = nullptr;  // N * D, FP16 copy
     int32_t* d_modalities  = nullptr;
     float*   d_timestamps  = nullptr;
+    // Optional per-node episode id (length N). nullptr = disabled.
+    int32_t* d_episode_ids = nullptr;
+    // Optional episode → members CSR (see HostEpisodeCSR / upload_episode_csr).
+    int32_t* d_ep_csr_offsets = nullptr;
+    int32_t* d_ep_csr_members = nullptr;
+    int32_t  episode_num_episodes      = 0;
+    int32_t  episode_csr_member_total  = 0;  // == ep_csr_offsets[num_episodes] on host
 
     // importance scoring — per-node importance weight, updated on access
     float*   d_importance   = nullptr;  // N, initialized to 1.0
@@ -79,6 +86,11 @@ struct DeviceMemoryGraph {
 
 DeviceMemoryGraph upload_to_device(const MemoryGraph& h);
 void              free_device(DeviceMemoryGraph& d);
+void              upload_episode_ids(DeviceMemoryGraph& dg,
+                                     const int32_t* host_episode_ids,
+                                     int32_t num_ids);
+void              upload_episode_csr(DeviceMemoryGraph& dg,
+                                     const HostEpisodeCSR& csr);
 
 // FP16 embedding management — converts existing FP32 embeddings on GPU
 void upload_fp16_embeddings(DeviceMemoryGraph& dg);
@@ -103,6 +115,15 @@ struct RetrievalConfig {
     // use top_k only). Set > top_k to score cross-modal hits over the full
     // compacted set without changing seed count (still min(top_k, ctx.max_k)).
     int32_t max_results_returned = -1;
+
+    RetrievalScope retrieval_scope = RetrievalScope::Global;
+    // EpisodeScoped: host fills member range into ep_csr_members (device copy).
+    int32_t query_episode_id            = -1;
+    int32_t query_episode_member_begin  = 0;
+    int32_t query_episode_member_count  = 0;
+    // Global (and optional): multiply d_final[i] by (1 + episode_same_boost)
+    // when d_episode_ids[i] == query_episode_id. Disabled if boost <= 0 or ids null.
+    float   episode_same_boost          = 0.0f;
 };
 
 struct RetrievalStats {
@@ -166,6 +187,11 @@ struct QueryContext {
     int32_t          graph_bfs_hops  = 0;
     int32_t          graph_mod_filter = -1;
     bool             graph_fp16      = false;
+    int32_t          graph_retrieval_scope = 0;
+    int32_t          graph_query_episode   = -1;
+    float            graph_episode_boost   = 0.0f;
+    int32_t          graph_ep_mbegin       = 0;
+    int32_t          graph_ep_mcount       = 0;
 
     // feature flags (opt-in)
     bool use_cuda_graph = false;

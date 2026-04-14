@@ -5,6 +5,9 @@
 //  same-episode cross-modal hit rate on the compacted rank window (see
 //  RetrievalConfig::max_results_returned) plus strict top-15 for comparison.
 //
+//  Emits multiple retrieval **variants** per run (global baseline, global +
+//  episode_same_boost, episode_scoped subset) for vast.ai validation matrix.
+//
 //  Usage:
 //    ./bench_kids_sweep [out.json]
 //    ./bench_kids_sweep --dump-corpus path.bin [--dump-n 5000] [out.json]
@@ -93,6 +96,12 @@ struct SweepRow {
     double  episode_cross_modal_hit_rate_top15   = 0;
 };
 
+struct BenchVariant {
+    const char*       name = nullptr;
+    RetrievalScope    scope = RetrievalScope::Global;
+    float             episode_same_boost = 0.0f;
+};
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -107,6 +116,12 @@ int main(int argc, char** argv) {
     const char* out_path = "results/kids_ball_mars_sweep.json";
     const char* dump_path = nullptr;
     int32_t      dump_n    = -1;
+
+    const BenchVariant variants[] = {
+        {"global_baseline", RetrievalScope::Global, 0.0f},
+        {"global_episode_boost_0.35", RetrievalScope::Global, 0.35f},
+        {"episode_scoped_no_bfs", RetrievalScope::EpisodeScoped, 0.0f},
+    };
 
     // Fast path: write corpus binary only (no GPU) for FAISS baseline scripts.
     if (argc >= 4 && std::strcmp(argv[1], "--dump-only") == 0) {
@@ -132,8 +147,8 @@ int main(int argc, char** argv) {
     if (dump_path && dump_n < 0)
         dump_n = n_list.back();
 
-    std::vector<SweepRow> rows;
-    rows.reserve(n_list.size());
+    std::vector<std::vector<SweepRow>> rows_by_variant;
+    rows_by_variant.resize(sizeof(variants) / sizeof(variants[0]));
 
     for (int32_t N : n_list) {
         if (N < 10) continue;
@@ -159,71 +174,93 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        HostEpisodeCSR ep_csr = build_episode_csr(corp.episode_ids, g.num_nodes);
+
         DeviceMemoryGraph dg = upload_to_device(g);
-        QueryContext ctx = create_query_context(g.num_nodes, DIM, QUERY_CTX_MAX_K);
+        upload_episode_ids(dg, corp.episode_ids.data(), g.num_nodes);
+        upload_episode_csr(dg, ep_csr);
 
-        RetrievalConfig cfg;
-        cfg.top_k                = TOP_K;
-        cfg.max_results_returned = MAX_RESULTS_HOST;
-        cfg.bfs_max_hops         = 2;
-        cfg.time_decay_lambda    = 8e-6f;
-        cfg.bfs_score_decay      = 0.55f;
-        cfg.modality_filter      = -1;
+        for (size_t vi = 0; vi < sizeof(variants) / sizeof(variants[0]); ++vi) {
+            const BenchVariant& bv = variants[vi];
+            QueryContext ctx = create_query_context(g.num_nodes, DIM, QUERY_CTX_MAX_K);
 
-        std::mt19937 rng(uint32_t(N) ^ 0xA5A5A5A5u);
-        std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
+            RetrievalConfig cfg;
+            cfg.top_k                = TOP_K;
+            cfg.max_results_returned = MAX_RESULTS_HOST;
+            cfg.bfs_max_hops         = 2;
+            cfg.time_decay_lambda    = 8e-6f;
+            cfg.bfs_score_decay      = 0.55f;
+            cfg.modality_filter      = -1;
+            cfg.retrieval_scope      = bv.scope;
+            cfg.episode_same_boost   = bv.episode_same_boost;
 
-        std::vector<double> wall_ms;
-        std::vector<double> kern_ms;
-        wall_ms.reserve(NUM_PROBES);
-        kern_ms.reserve(NUM_PROBES);
-        int32_t hits_compact = 0;
-        int32_t hits_top15   = 0;
+            std::mt19937 rng(uint32_t(N) ^ uint32_t(vi) ^ 0xA5A5A5A5u);
+            std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
 
-        for (int32_t p = 0; p < NUM_PROBES; ++p) {
-            const int32_t node = image_nodes[pick(rng)];
-            const float* qemb  = &g.embeddings[size_t(node) * DIM];
-            float qts = g.timestamps[node] + float(p) * 0.001f;
+            std::vector<double> wall_ms;
+            std::vector<double> kern_ms;
+            wall_ms.reserve(NUM_PROBES);
+            kern_ms.reserve(NUM_PROBES);
+            int32_t hits_compact = 0;
+            int32_t hits_top15   = 0;
 
-            cudaDeviceSynchronize();
-            auto t0 = std::chrono::high_resolution_clock::now();
-            RetrievalStats stats;
-            auto res = query_memory_fast(dg, ctx, qemb, qts, cfg, stats);
-            cudaDeviceSynchronize();
-            auto t1 = std::chrono::high_resolution_clock::now();
+            for (int32_t p = 0; p < NUM_PROBES; ++p) {
+                const int32_t node = image_nodes[pick(rng)];
+                const float* qemb  = &g.embeddings[size_t(node) * DIM];
+                float qts = g.timestamps[node] + float(p) * 0.001f;
 
-            wall_ms.push_back(
-                std::chrono::duration<double, std::milli>(t1 - t0).count());
-            kern_ms.push_back(double(stats.gpu_ms_total));
+                const int32_t ep = corp.episode_ids[node];
+                cfg.query_episode_id = ep;
+                if (bv.scope == RetrievalScope::EpisodeScoped) {
+                    cfg.query_episode_member_begin = ep_csr.ep_csr_offsets[static_cast<size_t>(ep)];
+                    cfg.query_episode_member_count =
+                        ep_csr.ep_csr_offsets[static_cast<size_t>(ep) + 1u] -
+                        ep_csr.ep_csr_offsets[static_cast<size_t>(ep)];
+                } else {
+                    cfg.query_episode_member_begin = 0;
+                    cfg.query_episode_member_count = 0;
+                }
 
-            const int32_t ep = corp.episode_ids[node];
-            const int32_t wfull = static_cast<int32_t>(res.size());
-            if (episode_cross_modal_hit(res, ep, corp.episode_ids, wfull))
-                ++hits_compact;
-            if (episode_cross_modal_hit(res, ep, corp.episode_ids, TOP_K))
-                ++hits_top15;
+                cudaDeviceSynchronize();
+                auto t0 = std::chrono::high_resolution_clock::now();
+                RetrievalStats stats;
+                auto res = query_memory_fast(dg, ctx, qemb, qts, cfg, stats);
+                cudaDeviceSynchronize();
+                auto t1 = std::chrono::high_resolution_clock::now();
+
+                wall_ms.push_back(
+                    std::chrono::duration<double, std::milli>(t1 - t0).count());
+                kern_ms.push_back(double(stats.gpu_ms_total));
+
+                const int32_t wfull = static_cast<int32_t>(res.size());
+                if (episode_cross_modal_hit(res, ep, corp.episode_ids, wfull))
+                    ++hits_compact;
+                if (episode_cross_modal_hit(res, ep, corp.episode_ids, TOP_K))
+                    ++hits_top15;
+            }
+
+            destroy_query_context(ctx);
+
+            SweepRow row;
+            row.N = N;
+            row.build_ms = build_ms;
+            row.wall_p99_ms = percentile_p99(wall_ms);
+            row.kernel_p99_ms = percentile_p99(kern_ms);
+            row.episode_cross_modal_hit_rate_compact =
+                NUM_PROBES > 0 ? double(hits_compact) / double(NUM_PROBES) : 0.0;
+            row.episode_cross_modal_hit_rate_top15 =
+                NUM_PROBES > 0 ? double(hits_top15) / double(NUM_PROBES) : 0.0;
+            rows_by_variant[vi].push_back(row);
+
+            std::fprintf(stderr,
+                         "[%s] N=%7d  build=%.1f ms  wall_p99=%.3f  kern_p99=%.3f  "
+                         "ep_hit_compact=%.3f ep_hit_top15=%.3f\n",
+                         bv.name, N, build_ms, row.wall_p99_ms, row.kernel_p99_ms,
+                         row.episode_cross_modal_hit_rate_compact,
+                         row.episode_cross_modal_hit_rate_top15);
         }
 
-        destroy_query_context(ctx);
         free_device(dg);
-
-        SweepRow row;
-        row.N = N;
-        row.build_ms = build_ms;
-        row.wall_p99_ms = percentile_p99(wall_ms);
-        row.kernel_p99_ms = percentile_p99(kern_ms);
-        row.episode_cross_modal_hit_rate_compact =
-            NUM_PROBES > 0 ? double(hits_compact) / double(NUM_PROBES) : 0.0;
-        row.episode_cross_modal_hit_rate_top15 =
-            NUM_PROBES > 0 ? double(hits_top15) / double(NUM_PROBES) : 0.0;
-        rows.push_back(row);
-
-        std::fprintf(stderr,
-                     "N=%7d  build=%.1f ms  wall_p99=%.3f  kern_p99=%.3f  "
-                     "ep_hit_compact=%.3f ep_hit_top15=%.3f\n",
-                     N, build_ms, row.wall_p99_ms, row.kernel_p99_ms,
-                     row.episode_cross_modal_hit_rate_compact,
-                     row.episode_cross_modal_hit_rate_top15);
     }
 
     FILE* fo = std::fopen(out_path, "w");
@@ -233,29 +270,41 @@ int main(int argc, char** argv) {
     }
     std::fprintf(fo, "{\n");
     std::fprintf(fo, "  \"tool\": \"mars-kids-ball-sweep\",\n");
-    std::fprintf(fo, "  \"version\": \"1.1\",\n");
-    std::fprintf(fo, "  \"note\": \"MARS full pipeline (temporal + cuBLAS/CUB + BFS). "
-                     "episode_cross_modal_hit_rate_compact scans up to max_results_returned "
-                     "sorted compact results (graph-aligned). top15 is the strict first-15 slice. "
-                     "FAISS: scripts/bench_kids_ball_faiss.py --search-k should match for fair episode comparison.\",\n");
+    std::fprintf(fo, "  \"version\": \"1.2\",\n");
+    std::fprintf(fo, "  \"note\": \"Multiple retrieval variants per N for vast.ai matrix. "
+                     "episode_scoped = similarity+decay over episode members only, BFS hops 0. "
+                     "global_episode_boost = same-episode score multiplier before top-K. "
+                     "See docs/MEMORY_LAYOUT_EMBODIED.md, TEMPORAL_HIERARCHY.md, MULTIMODAL_ROUTING.md.\",\n");
     std::fprintf(fo, "  \"embedding_dim\": %d,\n", DIM);
     std::fprintf(fo, "  \"top_k\": %d,\n", TOP_K);
     std::fprintf(fo, "  \"max_results_returned\": %d,\n", MAX_RESULTS_HOST);
     std::fprintf(fo, "  \"num_probes_per_n\": %d,\n", NUM_PROBES);
     std::fprintf(fo, "  \"corpus_seed\": %u,\n", CORPUS_SEED);
-    std::fprintf(fo, "  \"configurations\": [\n");
-    for (size_t i = 0; i < rows.size(); ++i) {
-        const SweepRow& r = rows[i];
+    std::fprintf(fo, "  \"variants\": [\n");
+    for (size_t vi = 0; vi < sizeof(variants) / sizeof(variants[0]); ++vi) {
+        const BenchVariant& bv = variants[vi];
+        const char* scope_str =
+            (bv.scope == RetrievalScope::EpisodeScoped) ? "episode_scoped" : "global";
         std::fprintf(fo, "    {\n");
-        std::fprintf(fo, "      \"N\": %d,\n", r.N);
-        std::fprintf(fo, "      \"build_ms\": %.3f,\n", r.build_ms);
-        std::fprintf(fo, "      \"wall_p99_ms\": %.4f,\n", r.wall_p99_ms);
-        std::fprintf(fo, "      \"kernel_p99_ms\": %.4f,\n", r.kernel_p99_ms);
-        std::fprintf(fo, "      \"episode_cross_modal_hit_rate_compact\": %.4f,\n",
-                     r.episode_cross_modal_hit_rate_compact);
-        std::fprintf(fo, "      \"episode_cross_modal_hit_rate_top15\": %.4f\n",
-                     r.episode_cross_modal_hit_rate_top15);
-        std::fprintf(fo, "    }%s\n", (i + 1 < rows.size()) ? "," : "");
+        std::fprintf(fo, "      \"name\": \"%s\",\n", bv.name);
+        std::fprintf(fo, "      \"retrieval_scope\": \"%s\",\n", scope_str);
+        std::fprintf(fo, "      \"episode_same_boost\": %.4f,\n", double(bv.episode_same_boost));
+        std::fprintf(fo, "      \"configurations\": [\n");
+        for (size_t i = 0; i < rows_by_variant[vi].size(); ++i) {
+            const SweepRow& r = rows_by_variant[vi][i];
+            std::fprintf(fo, "        {\n");
+            std::fprintf(fo, "          \"N\": %d,\n", r.N);
+            std::fprintf(fo, "          \"build_ms\": %.3f,\n", r.build_ms);
+            std::fprintf(fo, "          \"wall_p99_ms\": %.4f,\n", r.wall_p99_ms);
+            std::fprintf(fo, "          \"kernel_p99_ms\": %.4f,\n", r.kernel_p99_ms);
+            std::fprintf(fo, "          \"episode_cross_modal_hit_rate_compact\": %.4f,\n",
+                         r.episode_cross_modal_hit_rate_compact);
+            std::fprintf(fo, "          \"episode_cross_modal_hit_rate_top15\": %.4f\n",
+                         r.episode_cross_modal_hit_rate_top15);
+            std::fprintf(fo, "        }%s\n", (i + 1 < rows_by_variant[vi].size()) ? "," : "");
+        }
+        std::fprintf(fo, "      ]\n");
+        std::fprintf(fo, "    }%s\n", (vi + 1 < sizeof(variants) / sizeof(variants[0])) ? "," : "");
     }
     std::fprintf(fo, "  ]\n}\n");
     std::fclose(fo);

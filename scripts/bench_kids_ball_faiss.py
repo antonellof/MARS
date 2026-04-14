@@ -17,6 +17,11 @@ Usage:
   python3 scripts/bench_kids_ball_faiss.py --corpus results/kids_corpus_10k.bin
 
 Output: JSON to stdout.
+
+Future (harness-multipass-faiss): optional timed **second pass** — e.g. apply the
+same exponential time decay as MARS on the `--search-k` FAISS shortlist on CPU,
+then re-sort — and report **wall-clock** for fair comparison to full
+`query_memory_fast` pipeline latency. Not implemented here; see docs/FAIR_BASELINES.md.
 """
 from __future__ import annotations
 

@@ -431,6 +431,25 @@ void T18_embodied_kids_ball_csr() {
     PASS();
 }
 
+void T19_episode_csr_invariants() {
+    EmbodiedKidsBallCorpus c = EmbodiedKidsBallCorpus::make(30, 16, 99u);
+    HostEpisodeCSR csr = build_episode_csr(c.episode_ids, c.graph.num_nodes);
+    CHECK(csr.num_episodes > 0, "num_episodes");
+    CHECK(csr.ep_csr_offsets.size() == size_t(csr.num_episodes) + 1u, "offsets len");
+    CHECK(csr.ep_csr_offsets[0] == 0, "offsets[0]");
+    const int32_t tail = csr.ep_csr_offsets[size_t(csr.num_episodes)];
+    CHECK(tail == c.graph.num_nodes, "total members == N");
+    CHECK(int32_t(csr.ep_csr_members.size()) == tail, "members len");
+    std::vector<int32_t> seen(size_t(c.graph.num_nodes), 0);
+    for (int32_t nid : csr.ep_csr_members) {
+        CHECK(nid >= 0 && nid < c.graph.num_nodes, "member id range");
+        seen[size_t(nid)] = 1;
+    }
+    for (int32_t i = 0; i < c.graph.num_nodes; ++i)
+        CHECK(seen[size_t(i)] == 1, "each node appears once in CSR");
+    PASS();
+}
+
 // ─── Test runner ────────────────────────────────────────────────────
 
 int main() {
@@ -456,6 +475,7 @@ int main() {
     T16_streaming_capacity_limit();
     T17_streaming_flush_preserves_bridges();
     T18_embodied_kids_ball_csr();
+    T19_episode_csr_invariants();
 
     int32_t passed = 0, failed = 0;
     for (const auto& r : g_results) {

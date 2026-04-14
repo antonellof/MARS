@@ -66,6 +66,7 @@ int main(int argc, char** argv) {
         corpus_size, EMBEDDING_DIM, /*seed=*/2026u);
     MemoryGraph& graph = corp.graph;
     graph.build_nsn_edges(6, 0.15);
+    HostEpisodeCSR ep_csr = build_episode_csr(corp.episode_ids, graph.num_nodes);
     std::fprintf(stderr, "Embodied kids-ball graph: %d nodes, %d undirected edges\n",
                  graph.num_nodes, graph.num_edges / 2);
 
@@ -80,6 +81,8 @@ int main(int argc, char** argv) {
     }
 
     DeviceMemoryGraph dg = upload_to_device(graph);
+    upload_episode_ids(dg, corp.episode_ids.data(), graph.num_nodes);
+    upload_episode_csr(dg, ep_csr);
     QueryContext ctx = create_query_context(graph.num_nodes, EMBEDDING_DIM,
                                             QUERY_CTX_MAX_K);
 
@@ -90,6 +93,8 @@ int main(int argc, char** argv) {
     cfg.time_decay_lambda       = 8e-6f;
     cfg.bfs_score_decay         = 0.55f;
     cfg.modality_filter         = -1;
+    cfg.retrieval_scope         = RetrievalScope::Global;
+    cfg.episode_same_boost      = 0.35f;
 
     std::mt19937 rng(914u);
     std::uniform_int_distribution<size_t> pick_img(0, image_nodes.size() - 1);
@@ -103,12 +108,14 @@ int main(int argc, char** argv) {
         const float* qemb  = &graph.embeddings[size_t(node) * EMBEDDING_DIM];
         float qts = graph.timestamps[node] + float(frame) * 0.001f;
 
+        const int32_t ep = corp.episode_ids[node];
+        cfg.query_episode_id = ep;
+
         RetrievalStats stats;
         auto results = query_memory_fast(dg, ctx, qemb, qts, cfg, stats);
         report.latencies.add(double(stats.gpu_ms_total));
         ++total;
 
-        const int32_t ep = corp.episode_ids[node];
         const int32_t wfull = static_cast<int32_t>(results.size());
         if (episode_cross_modal_hit(results, ep, corp.episode_ids, wfull))
             ++hits_compact;

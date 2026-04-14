@@ -37,6 +37,8 @@ For N = 1 million memories with D = 768 and average degree 12:
 
 This fits comfortably in a 40 GB A100 with room for ~12M memories total.
 
+**Embodied / layout extensions (design notes):** [MEMORY_LAYOUT_EMBODIED.md](MEMORY_LAYOUT_EMBODIED.md) (SoA, FP16/BF16, kids-scale VRAM), [TEMPORAL_HIERARCHY.md](TEMPORAL_HIERARCHY.md) (hot tier + warm NSN), [MULTIMODAL_ROUTING.md](MULTIMODAL_ROUTING.md) (modality-aware seeds), [FAIR_BASELINES.md](FAIR_BASELINES.md) (comparison contracts), [ANN_REFINE_FUTURE.md](ANN_REFINE_FUTURE.md) (ANN + refine sketch). **Episode metadata on GPU:** `upload_episode_ids` / `upload_episode_csr` plus `RetrievalScope::EpisodeScoped` in [memory_cuda.cuh](../include/memory_cuda.cuh).
+
 ## 2. The Neural Shortcut Network
 
 The graph topology is constructed in five phases. The first four build a

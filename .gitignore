@@ -69,3 +69,4 @@ demos/av_visual/preview_*.png
 
 # ─── Temporary files ───
 *.tmp
+tests/run_tests

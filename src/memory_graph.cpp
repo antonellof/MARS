@@ -9,6 +9,40 @@
 #include <random>
 #include <unordered_set>
 
+HostEpisodeCSR build_episode_csr(const std::vector<int32_t>& episode_ids,
+                                 int32_t num_nodes) {
+    HostEpisodeCSR out;
+    if (num_nodes <= 0 || int32_t(episode_ids.size()) != num_nodes)
+        return out;
+
+    int32_t max_ep = 0;
+    for (int32_t i = 0; i < num_nodes; ++i)
+        max_ep = std::max(max_ep, episode_ids[i]);
+    out.num_episodes = max_ep + 1;
+
+    std::vector<int32_t> cnt(static_cast<size_t>(out.num_episodes), 0);
+    for (int32_t i = 0; i < num_nodes; ++i)
+        ++cnt[static_cast<size_t>(episode_ids[i])];
+
+    out.ep_csr_offsets.resize(static_cast<size_t>(out.num_episodes) + 1u);
+    out.ep_csr_offsets[0] = 0;
+    for (int32_t e = 0; e < out.num_episodes; ++e)
+        out.ep_csr_offsets[static_cast<size_t>(e) + 1u] =
+            out.ep_csr_offsets[static_cast<size_t>(e)] + cnt[static_cast<size_t>(e)];
+
+    out.ep_csr_members.resize(static_cast<size_t>(out.ep_csr_offsets.back()));
+    std::vector<int32_t> cursor(out.ep_csr_offsets.begin(),
+                                out.ep_csr_offsets.begin() + out.num_episodes);
+    for (int32_t i = 0; i < num_nodes; ++i) {
+        int32_t ep = episode_ids[i];
+        size_t  ei = static_cast<size_t>(ep);
+        int32_t pos = cursor[ei];
+        cursor[ei]   = pos + 1;
+        out.ep_csr_members[static_cast<size_t>(pos)] = i;
+    }
+    return out;
+}
+
 MemoryGraph MemoryGraph::synthetic(int32_t n_text,
                                    int32_t n_audio,
                                    int32_t n_image,

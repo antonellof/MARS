@@ -417,6 +417,81 @@ __global__ void temporal_rerank_kernel(
     final_scores[tid] = base * weight;
 }
 
+// Fill d_final with -inf (episode-scoped path before subset writes).
+__global__ void fill_neg_inf_final_kernel(float* __restrict__ d_final, int32_t N) {
+    int32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < N) d_final[tid] = NEG_INF;
+}
+
+// Same-episode score boost on global d_final (post decay, pre top-K).
+__global__ void episode_same_boost_kernel(
+    float* __restrict__ d_final,
+    const int32_t* __restrict__ d_episode_ids,
+    int32_t N,
+    int32_t query_episode_id,
+    float boost_additive)
+{
+    int32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N) return;
+    float s = d_final[tid];
+    if (s <= NEG_INF * 0.5f) return;
+    if (d_episode_ids[tid] == query_episode_id)
+        d_final[tid] = s * (1.0f + boost_additive);
+}
+
+// One CUDA block per episode member: fused cosine + temporal decay at d_final[node_id].
+__global__ void cosine_episode_subset_fused_kernel(
+    const float*   __restrict__ embeddings,
+    const float*   __restrict__ query,
+    const int32_t* __restrict__ modalities,
+    const float*   __restrict__ timestamps,
+    float*         __restrict__ d_final,
+    int32_t                      D,
+    int32_t                      modality_filter,
+    float                        query_ts,
+    float                        lambda,
+    const int32_t* __restrict__ ep_members,
+    int32_t                      member_begin,
+    int32_t                      M)
+{
+    int32_t j = blockIdx.x;
+    if (j >= M) return;
+
+    int32_t node_id = ep_members[member_begin + j];
+
+    if (modality_filter >= 0 && modalities[node_id] != modality_filter) {
+        if (threadIdx.x == 0) d_final[node_id] = NEG_INF;
+        return;
+    }
+
+    const float* vec = embeddings + int64_t(node_id) * D;
+
+    float partial = 0.0f;
+    for (int32_t d = threadIdx.x; d < D; d += blockDim.x) {
+        partial += vec[d] * query[d];
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        partial += __shfl_down_sync(0xFFFFFFFF, partial, offset);
+
+    __shared__ float warp_sums[WARPS_PER_BLOCK];
+    int32_t lane    = threadIdx.x & (WARP_SIZE - 1);
+    int32_t warp_id = threadIdx.x / WARP_SIZE;
+    if (lane == 0) warp_sums[warp_id] = partial;
+    __syncthreads();
+
+    if (warp_id == 0) {
+        float v = (lane < WARPS_PER_BLOCK) ? warp_sums[lane] : 0.0f;
+        for (int offset = WARPS_PER_BLOCK / 2; offset > 0; offset >>= 1)
+            v += __shfl_down_sync(0xFFFFFFFF, v, offset);
+        if (lane == 0) {
+            float age    = fmaxf(0.0f, query_ts - timestamps[node_id]);
+            float weight = __expf(-lambda * age);
+            d_final[node_id] = v * weight;
+        }
+    }
+}
+
 // ============================================================================
 //  KERNEL: Tiled Top-K (replaces single-block top_k_kernel)
 //
@@ -730,7 +805,53 @@ void free_device(DeviceMemoryGraph& d) {
     cudaFree(d.d_embeddings_fp16);
     cudaFree(d.d_modalities);
     cudaFree(d.d_timestamps);
+    cudaFree(d.d_episode_ids);
+    cudaFree(d.d_ep_csr_offsets);
+    cudaFree(d.d_ep_csr_members);
     d = {};
+}
+
+void upload_episode_ids(DeviceMemoryGraph& dg,
+                        const int32_t* host_episode_ids,
+                        int32_t num_ids) {
+    if (dg.d_episode_ids) {
+        cudaFree(dg.d_episode_ids);
+        dg.d_episode_ids = nullptr;
+    }
+    if (!host_episode_ids || num_ids != dg.num_nodes || num_ids <= 0) return;
+    CUDA_CHECK(cudaMalloc(&dg.d_episode_ids, size_t(num_ids) * sizeof(int32_t)));
+    CUDA_CHECK(cudaMemcpy(dg.d_episode_ids, host_episode_ids,
+                          size_t(num_ids) * sizeof(int32_t), cudaMemcpyHostToDevice));
+}
+
+void upload_episode_csr(DeviceMemoryGraph& dg, const HostEpisodeCSR& csr) {
+    if (dg.d_ep_csr_offsets) {
+        cudaFree(dg.d_ep_csr_offsets);
+        dg.d_ep_csr_offsets = nullptr;
+    }
+    if (dg.d_ep_csr_members) {
+        cudaFree(dg.d_ep_csr_members);
+        dg.d_ep_csr_members = nullptr;
+    }
+    dg.episode_num_episodes       = 0;
+    dg.episode_csr_member_total   = 0;
+    if (csr.num_episodes <= 0) return;
+    if (int32_t(csr.ep_csr_offsets.size()) != csr.num_episodes + 1) return;
+    const int32_t tail = csr.ep_csr_offsets[static_cast<size_t>(csr.num_episodes)];
+    if (tail < 0 || int32_t(csr.ep_csr_members.size()) != tail) return;
+
+    dg.episode_num_episodes     = csr.num_episodes;
+    dg.episode_csr_member_total = tail;
+    CUDA_CHECK(cudaMalloc(&dg.d_ep_csr_offsets,
+                          csr.ep_csr_offsets.size() * sizeof(int32_t)));
+    CUDA_CHECK(cudaMalloc(&dg.d_ep_csr_members,
+                          csr.ep_csr_members.size() * sizeof(int32_t)));
+    CUDA_CHECK(cudaMemcpy(dg.d_ep_csr_offsets, csr.ep_csr_offsets.data(),
+                          csr.ep_csr_offsets.size() * sizeof(int32_t),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(dg.d_ep_csr_members, csr.ep_csr_members.data(),
+                          csr.ep_csr_members.size() * sizeof(int32_t),
+                          cudaMemcpyHostToDevice));
 }
 
 // ── FP16 embedding management ──────────────────────────────────
@@ -799,6 +920,13 @@ query_memory(const DeviceMemoryGraph& dg,
         d_sim, dg.d_timestamps, d_final,
         N, query_timestamp, cfg.time_decay_lambda);
     CUDA_CHECK(cudaGetLastError());
+
+    if (dg.d_episode_ids != nullptr && cfg.query_episode_id >= 0 && cfg.episode_same_boost > 0.0f) {
+        int32_t eb_blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        episode_same_boost_kernel<<<eb_blocks, THREADS_PER_BLOCK>>>(
+            d_final, dg.d_episode_ids, N, cfg.query_episode_id, cfg.episode_same_boost);
+        CUDA_CHECK(cudaGetLastError());
+    }
 
     // ── STAGE 3: top-K seed selection ────────────────────────────
     cudaEventRecord(e2);
@@ -1031,6 +1159,17 @@ void destroy_query_context(QueryContext& ctx) {
 //       at N=10K). Opt-in via ctx.use_cub_topk.
 // ============================================================================
 
+// ── Episode-scoped query (subset similarity over one episode's members) ──
+static bool episode_scoped_active(const DeviceMemoryGraph& dg,
+                                  const RetrievalConfig& cfg) {
+    return (cfg.retrieval_scope == RetrievalScope::EpisodeScoped) &&
+           dg.d_ep_csr_offsets != nullptr && dg.d_ep_csr_members != nullptr &&
+           cfg.query_episode_id >= 0 && cfg.query_episode_id < dg.episode_num_episodes &&
+           cfg.query_episode_member_count > 0 && cfg.query_episode_member_begin >= 0 &&
+           cfg.query_episode_member_begin + cfg.query_episode_member_count <=
+               dg.episode_csr_member_total;
+}
+
 // ── Helper: launch the full kernel pipeline (stages 1–7) ─────────
 // Extracted so it can be called directly OR inside a CUDA graph capture.
 // When skip_error_checks is true, CUDA_CHECK(cudaGetLastError()) calls
@@ -1045,12 +1184,27 @@ static void launch_pipeline_kernels(
     const int32_t K = std::min(cfg.top_k, ctx.max_k);
     cudaStream_t  s = ctx.stream;
 
+    const bool episode_scoped = episode_scoped_active(dg, cfg);
+
+    const int32_t bfs_hops_eff = episode_scoped ? 0 : cfg.bfs_max_hops;
+
     // ── STAGE 1+2: fused similarity + temporal rerank ──────────────
-    // Eliminates one kernel launch + one full N-element read/write pass
-    // by computing sim * exp(-λ·age) in the same block that computes
-    // the dot product. Output goes directly to d_final.
     cudaEventRecord(ctx.e0, s);
-    if (ctx.use_cublas && ctx.cublas_handle != nullptr && cfg.modality_filter < 0) {
+    if (episode_scoped) {
+        int32_t fill_blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        fill_neg_inf_final_kernel<<<fill_blocks, THREADS_PER_BLOCK, 0, s>>>(
+            ctx.d_final, N);
+        if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
+
+        const int32_t M = cfg.query_episode_member_count;
+        cosine_episode_subset_fused_kernel<<<M, THREADS_PER_BLOCK, 0, s>>>(
+            dg.d_embeddings, ctx.d_query, dg.d_modalities, dg.d_timestamps,
+            ctx.d_final,
+            D, cfg.modality_filter, query_timestamp, cfg.time_decay_lambda,
+            dg.d_ep_csr_members, cfg.query_episode_member_begin, M);
+        if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
+        cudaEventRecord(ctx.e1, s);
+    } else if (ctx.use_cublas && ctx.cublas_handle != nullptr && cfg.modality_filter < 0) {
         // cuBLAS path: can't fuse, so do SGEMV + separate rerank
         float alpha = 1.0f, beta = 0.0f;
         cublasHandle_t handle = static_cast<cublasHandle_t>(ctx.cublas_handle);
@@ -1084,6 +1238,14 @@ static void launch_pipeline_kernels(
             query_timestamp, cfg.time_decay_lambda);
         if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
         cudaEventRecord(ctx.e1, s);  // e1 = e0 (stages fused)
+    }
+
+    if (!episode_scoped && dg.d_episode_ids != nullptr && cfg.query_episode_id >= 0 &&
+        cfg.episode_same_boost > 0.0f) {
+        int32_t eb_blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        episode_same_boost_kernel<<<eb_blocks, THREADS_PER_BLOCK, 0, s>>>(
+            ctx.d_final, dg.d_episode_ids, N, cfg.query_episode_id, cfg.episode_same_boost);
+        if (!skip_error_checks) CUDA_CHECK(cudaGetLastError());
     }
 
     // ── STAGE 3: top-K selection ──────────────────────────────────
@@ -1160,7 +1322,7 @@ static void launch_pipeline_kernels(
     int32_t max_frontier_per_hop = std::min(N, K * 20);
     int32_t bfs_blocks = (max_frontier_per_hop + WARPS_PER_BLOCK - 1) / WARPS_PER_BLOCK;
 
-    for (int hop = 0; hop < cfg.bfs_max_hops; ++hop) {
+    for (int hop = 0; hop < bfs_hops_eff; ++hop) {
         cudaMemsetAsync(cnt_pong, 0, sizeof(int32_t), s);
 
         bfs_expand_device_driven_kernel<<<bfs_blocks, THREADS_PER_BLOCK, 0, s>>>(
@@ -1205,14 +1367,22 @@ query_memory_fast(const DeviceMemoryGraph& dg,
                                cudaMemcpyHostToDevice, s));
     CUDA_CHECK(cudaStreamSynchronize(s));  // ensure query is on GPU before graph
 
-    if (ctx.use_cuda_graph) {
+    const bool allow_cuda_graph =
+        ctx.use_cuda_graph && (cfg.retrieval_scope == RetrievalScope::Global);
+
+    if (allow_cuda_graph) {
         // Check if we need to (re-)capture the graph
         bool need_capture = !ctx.graph_captured
             || ctx.graph_N != N
             || ctx.graph_K != K
             || ctx.graph_bfs_hops != cfg.bfs_max_hops
             || ctx.graph_mod_filter != cfg.modality_filter
-            || ctx.graph_fp16 != (ctx.use_fp16 && dg.d_embeddings_fp16 != nullptr);
+            || ctx.graph_fp16 != (ctx.use_fp16 && dg.d_embeddings_fp16 != nullptr)
+            || ctx.graph_query_episode != cfg.query_episode_id
+            || std::fabs(double(ctx.graph_episode_boost - cfg.episode_same_boost)) > 1e-12
+            || ctx.graph_ep_mbegin != cfg.query_episode_member_begin
+            || ctx.graph_ep_mcount != cfg.query_episode_member_count
+            || ctx.graph_retrieval_scope != static_cast<int32_t>(cfg.retrieval_scope);
 
         if (need_capture) {
             // Destroy old graph if any
@@ -1231,12 +1401,17 @@ query_memory_fast(const DeviceMemoryGraph& dg,
             ctx.graph_bfs_hops  = cfg.bfs_max_hops;
             ctx.graph_mod_filter = cfg.modality_filter;
             ctx.graph_fp16      = (ctx.use_fp16 && dg.d_embeddings_fp16 != nullptr);
+            ctx.graph_retrieval_scope = static_cast<int32_t>(cfg.retrieval_scope);
+            ctx.graph_query_episode   = cfg.query_episode_id;
+            ctx.graph_episode_boost   = cfg.episode_same_boost;
+            ctx.graph_ep_mbegin       = cfg.query_episode_member_begin;
+            ctx.graph_ep_mcount       = cfg.query_episode_member_count;
         }
 
         // Replay
         CUDA_CHECK(cudaGraphLaunch(ctx.graph_exec, s));
     } else {
-        // Direct launch — device-driven path
+        // Direct launch — device-driven path (required for episode-scoped queries)
         launch_pipeline_kernels(dg, ctx, query_timestamp, cfg, /*skip_error_checks=*/false);
     }
 
@@ -1277,8 +1452,13 @@ query_memory_fast(const DeviceMemoryGraph& dg,
     cudaEventElapsedTime(&stats.gpu_ms_topk,       ctx.e2, ctx.e3);
     cudaEventElapsedTime(&stats.gpu_ms_bfs,        ctx.e3, ctx.e4);
     cudaEventElapsedTime(&stats.gpu_ms_total,      ctx.e0, ctx.e4);
-    stats.nodes_scanned = N;
-    stats.bfs_waves     = cfg.bfs_max_hops;
+    if (episode_scoped_active(dg, cfg)) {
+        stats.nodes_scanned = cfg.query_episode_member_count;
+        stats.bfs_waves     = 0;
+    } else {
+        stats.nodes_scanned = N;
+        stats.bfs_waves     = cfg.bfs_max_hops;
+    }
 
     return results;
 }

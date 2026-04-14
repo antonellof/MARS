@@ -1,0 +1,43 @@
+{
+  "schema": "mars.vast_validation_matrix.v1",
+  "host": "",
+  "gpu": "",
+  "cuda_runtime": "",
+  "git_commit": "",
+  "artifacts": {
+    "mars_kids_sweep_json": "",
+    "faiss_baseline_json": "",
+    "validate_json": "",
+    "embodied_demo_json": ""
+  },
+  "rows": [
+    {
+      "label": "global_baseline_N10000",
+      "N": 10000,
+      "variant": "global_baseline",
+      "wall_p99_ms_measured": null,
+      "kernel_p99_ms_measured": null,
+      "episode_hit_compact_measured": null,
+      "episode_hit_top15_measured": null
+    },
+    {
+      "label": "global_episode_boost_N10000",
+      "N": 10000,
+      "variant": "global_episode_boost_0.35",
+      "wall_p99_ms_measured": null,
+      "kernel_p99_ms_measured": null,
+      "episode_hit_compact_measured": null,
+      "episode_hit_top15_measured": null
+    },
+    {
+      "label": "episode_scoped_N10000",
+      "N": 10000,
+      "variant": "episode_scoped_no_bfs",
+      "wall_p99_ms_measured": null,
+      "kernel_p99_ms_measured": null,
+      "episode_hit_compact_measured": null,
+      "episode_hit_top15_measured": null,
+      "note": "Different semantics than global — rank within episode only."
+    }
+  ]
+}

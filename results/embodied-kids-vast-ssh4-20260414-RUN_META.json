@@ -9,7 +9,8 @@
   "git_commit": "c2e49fea09e4644a75b6a1c65ea81e872e65c3ee",
   "branch": "feature/embodied-kids-ball-benchmark",
   "artifacts": {
-    "mars_sweep_v12": "results/embodied-kids-vast-ssh4-20260414-mars_sweep_v12.json"
+    "mars_sweep_v12": "results/embodied-kids-vast-ssh4-20260414-mars_sweep_v12.json",
+    "mars_sweep_v12_post_opt": "results/embodied-kids-vast-ssh4-20260414-mars_sweep_v12_post_opt.json"
   },
   "commands": [
     "make tests",

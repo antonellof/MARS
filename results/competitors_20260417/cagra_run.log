@@ -1,0 +1,7 @@
+=== CAGRA @ 10k (queries=256) ===
+FAIL_10k
+=== CAGRA @ 100k (queries=256) ===
+FAIL_100k
+=== CAGRA @ 1m (queries=128) ===
+FAIL_1m
+=== ALL_DONE ===

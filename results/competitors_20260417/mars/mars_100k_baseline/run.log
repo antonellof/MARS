@@ -1,0 +1,3 @@
+[iterate] boost=0.000 fp16=0 graph=0 -> comp=2.5625 rank=2.5625 wall_p99=0.670 kern_p99=0.413 hit_c=0.977 hit_t15=0.793 -> results/competitors_20260417/mars/mars_100k_baseline/step_global_boost_0.json
+[iterate] episode_scoped -> comp=3.0000 rank=3.0000 wall_p99=0.203 -> results/competitors_20260417/mars/mars_100k_baseline/step_episode_scoped.json
+Wrote SUMMARY under results/competitors_20260417/mars/mars_100k_baseline

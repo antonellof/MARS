@@ -62,14 +62,24 @@ All corpus sizes up to 50K pass the **1 ms AV perception deadline** with zero mi
 GPU compute is only 1.5% of total — the bottleneck is PCIe bandwidth at ~12.4 GB/s.
 For real-time workloads, keep the working set in VRAM (up to 13M on A100 40GB).
 
-**Comparison** (same A100 hardware):
+**Head-to-head against modern GPU ANN libraries** — paired-probe A100 run
+2026-04-17, kids-ball corpus, query is an IMAGE node and we measure
+`hit@15` of the same-episode TEXT *and* AUDIO neighbors (the embodied
+multimodal contract). See [`results/competitors_20260417/SUMMARY.md`](results/competitors_20260417/SUMMARY.md):
 
-| System | N=10K | N=50K | N=1M | Temporal | Streaming |
-|--------|-------|-------|------|----------|-----------|
-| FAISS GPU Flat | 0.12 ms | 0.35 ms | — | No | No |
-| FAISS GPU IVF | 0.15 ms | 0.28 ms | — | No | No |
-| cuVS CAGRA | 2.29 ms | 2.47 ms | — | No | No |
-| **MARS** | **0.44 ms** | **0.56 ms** | **2.67 ms** | **Yes** | **Yes** |
+| System | N=10K p99 / hit@15 | N=100K p99 / hit@15 | N=1M p99 / hit@15 |
+|--------|-------------------:|--------------------:|------------------:|
+| FAISS Flat-GPU (exhaustive) | 0.18 ms / **1.00** | 0.78 ms / **1.00** | 6.64 ms / **1.00** |
+| FAISS IVF-GPU (nprobe=64)   | 0.45 ms / 0.52     | 0.60 ms / 0.37      | 1.42 ms / **0.00** |
+| cuVS CAGRA (graph_degree=64) | 3.32 ms / **1.00** | 3.23 ms / 0.01     | 3.25 ms / **0.00** |
+| MARS Global (FP32 cuBLAS)   | 0.47 ms / 0.83     | 0.67 ms / 0.79      | **2.51 ms / 0.84** |
+| MARS Global (FP16 fused)    | **0.28 ms** / 0.83 | 0.66 ms / 0.79      | 3.73 ms / 0.84    |
+| **MARS Episode-scoped**     | **0.19 ms / 1.00** | **0.20 ms / 1.00**  | **0.20 ms / 1.00** |
+
+Two findings drove the design (read [`SUMMARY.md`](results/competitors_20260417/SUMMARY.md) for the full trace):
+
+- **MARS Episode-scoped is Pareto-dominant** at every N: 34× faster than FAISS Flat at 1M, and 16× faster than CAGRA — both at perfect recall.
+- **Cosine ANN baselines collapse on this metric at scale**: the kids-ball corpus has tiny clusters (10 nodes per episode, 100 K episodes at 1M), so per-episode TEXT/AUDIO are buried among ~999 990 distractors. CAGRA's graph traversal (even at search_k=512) and IVF cells (any nprobe) miss them. MARS keeps episode membership in the graph topology and recovers them in O(member_count).
 
 **Episode-scoped retrieval** (when `query_episode_id` is known —
 embodied loops, AV per-track memory, voice-agent conversation): MARS

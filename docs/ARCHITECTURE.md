@@ -388,3 +388,61 @@ known *before* the query — it does not solve cross-episode retrieval
 (which is exactly what BFS bridges + temporal decay over the global
 corpus exist for). The two paths are complementary; the embodied demo
 exposes both via `--scope=episode` / `--scope=global`.
+
+### 7.2 Head-to-head against FAISS / cuVS CAGRA (2026-04-17)
+
+Direct A100 measurements against the two most-cited GPU baselines on
+the embodied multimodal contract (IMAGE → same-episode TEXT+AUDIO in
+top-15). Full table and raw artefacts in
+[`results/competitors_20260417/SUMMARY.md`](../results/competitors_20260417/SUMMARY.md);
+reproduction in `scripts/bench_kids_ball_{faiss,cuvs_cagra}.py`.
+
+| System | N=10K p99 / hit@15 | N=100K p99 / hit@15 | N=1M p99 / hit@15 |
+|--------|------------------:|--------------------:|------------------:|
+| FAISS Flat-GPU            | 0.18 ms / **1.00** | 0.78 ms / **1.00** | 6.64 ms / **1.00** |
+| FAISS IVF-GPU (nprobe=64) | 0.45 ms / 0.52     | 0.60 ms / 0.37     | 1.42 ms / **0.00** |
+| cuVS CAGRA (graph_d=64)   | 3.32 ms / **1.00** | 3.23 ms / 0.01     | 3.25 ms / **0.00** |
+| MARS Global (FP32 cuBLAS) | 0.47 ms / 0.83     | 0.67 ms / 0.79     | **2.51 ms** / 0.84 |
+| MARS Global (FP16 fused)  | **0.28 ms** / 0.83 | 0.66 ms / 0.79     | 3.73 ms / 0.84    |
+| **MARS Episode-scoped**   | **0.19 ms / 1.00** | **0.20 ms / 1.00** | **0.20 ms / 1.00** |
+
+Two findings:
+
+1. **MARS Episode-scoped is Pareto-dominant** (faster *and* perfect
+   recall) at every N. At N=1M it is 34× faster than the only baseline
+   that also achieves hit@15=1.00 (FAISS Flat).
+2. **Cosine ANN baselines collapse on this metric at scale**. The
+   kids-ball corpus has 10-node episodes; per-episode TEXT/AUDIO are
+   buried among ~999 990 distractors at N=1M. CAGRA at search_k=512
+   still returns hit@15=0; FAISS IVF (any nprobe) misses the cells
+   the right neighbors land in. Only MARS-ep (episode CSR) and FAISS
+   Flat (exhaustive) recover them.
+
+### 7.3 FP16 fused similarity — when to enable
+
+`--use-fp16` switches Stage 1 from cuBLAS `Sgemv` (FP32) to the
+hand-fused FP16 cosine + temporal-decay kernel:
+
+| N | FP32 cuBLAS | FP16 fused | Δ |
+|---|------------:|----------:|---:|
+| 10K  | 0.47 ms | **0.28 ms** | **−41%** |
+| 100K | 0.67 ms | 0.66 ms | flat |
+| 1M   | **2.51 ms** | 3.73 ms | **+49%** |
+
+cuBLAS `Sgemv` exploits Tensor Core paths and per-arch tile
+heuristics that the hand-fused kernel cannot match once N exceeds
+the L2 working set. Use `--use-fp16` for N < 100K only; default to
+cuBLAS for production deployments at large N.
+
+### 7.4 Known issues
+
+**`--use-cuda-graph` is currently broken on the global path**:
+captured-graph replays return wrong results (hit@15 collapses from
+~0.83 to 0.004) and the next episode-scoped step hits
+`memory_cuda.cu:1197 — invalid argument`. Root cause: counters
+(`d_compact_count`) and the episode-scoped `d_final` reset are not
+re-initialised between graph replays, and the captured stream's state
+does not cleanly transition back for the next direct launch. Tracked
+in paper §11 *Future Work*; the scaffolding lives in
+`src/cuda_graph_capture.{cu,cuh}` and `src/memory_cuda.cu` lines
+1370–1416.

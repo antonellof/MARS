@@ -1,0 +1,19 @@
+=== MARS baseline+fp16 across N ===
+=== MARS 10k baseline (probes=256) ===
+[iterate] boost=0.000 fp16=0 graph=0 -> comp=2.6289 rank=2.6289 wall_p99=0.474 kern_p99=0.201 hit_c=0.973 hit_t15=0.828 -> results/competitors_20260417/mars/mars_10k_baseline/step_global_boost_0.json
+=== MARS 10k fp16 (probes=256) ===
+[iterate] boost=0.000 fp16=1 graph=0 -> comp=2.6250 rank=2.6250 wall_p99=0.280 kern_p99=0.181 hit_c=0.969 hit_t15=0.828 -> results/competitors_20260417/mars/mars_10k_fp16/step_global_boost_0.json
+=== MARS 100k baseline (probes=256) ===
+[iterate] boost=0.000 fp16=0 graph=0 -> comp=2.5625 rank=2.5625 wall_p99=0.670 kern_p99=0.413 hit_c=0.977 hit_t15=0.793 -> results/competitors_20260417/mars/mars_100k_baseline/step_global_boost_0.json
+=== MARS 100k fp16 (probes=256) ===
+[iterate] boost=0.000 fp16=1 graph=0 -> comp=2.5625 rank=2.5625 wall_p99=0.655 kern_p99=0.520 hit_c=0.977 hit_t15=0.793 -> results/competitors_20260417/mars/mars_100k_fp16/step_global_boost_0.json
+=== MARS 1m baseline (probes=128) ===
+[iterate] boost=0.000 fp16=0 graph=0 -> comp=2.6641 rank=2.6641 wall_p99=2.507 kern_p99=2.376 hit_c=0.977 hit_t15=0.844 -> results/competitors_20260417/mars/mars_1m_baseline/step_global_boost_0.json
+=== MARS 1m fp16 (probes=128) ===
+[iterate] boost=0.000 fp16=1 graph=0 -> comp=2.6641 rank=2.6641 wall_p99=3.731 kern_p99=3.634 hit_c=0.977 hit_t15=0.844 -> results/competitors_20260417/mars/mars_1m_fp16/step_global_boost_0.json
+=== CAGRA across N ===
+=== CAGRA @ 10k (queries=256) ===
+  File "<string>", line 1
+    import json; d=json.load(open("results/competitors_20260417/cuvs_cagra/cagra_10k.json")); c=d["configurations"][0]; print(f"  N=10k  build_ms={c[\build_ms\]:.1f}  p99_ms={c[\p99_ms\]:.3f}  hit_top15={c[\episode_cross_modal_hit_rate_top15\]:.3f}")
+                                                                                                                                                      ^
+SyntaxError: unexpected character after line continuation character

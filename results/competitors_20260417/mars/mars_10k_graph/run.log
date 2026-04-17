@@ -1,0 +1,2 @@
+[iterate] boost=0.000 fp16=0 graph=1 -> comp=0.1016 rank=0.1016 wall_p99=0.251 kern_p99=0.000 hit_c=0.094 hit_t15=0.004 -> results/competitors_20260417/mars/mars_10k_graph/step_global_boost_0.json
+CUDA error src/memory_cuda.cu:1197 — invalid argument

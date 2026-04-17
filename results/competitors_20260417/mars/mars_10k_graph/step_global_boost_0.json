@@ -1,0 +1,16 @@
+{
+  "step": "global_episode_boost",
+  "episode_same_boost": 0.000000,
+  "N": 10000,
+  "num_probes": 256,
+  "build_ms": 155.698,
+  "wall_p99_ms": 0.2505,
+  "kernel_p99_ms": 0.0000,
+  "episode_cross_modal_hit_rate_compact": 0.093750,
+  "episode_cross_modal_hit_rate_top15": 0.003906,
+  "composite_score": 0.101562,
+  "ranking_score": 0.101562,
+  "iterate_wall_ms_penalty": 0.000000,
+  "use_fp16": false,
+  "use_cuda_graph": true
+}

@@ -235,6 +235,15 @@ specific requirements of streaming perception workloads.
   (Section~\ref{sec:demos}) --- AV (60~Hz, 1~ms), robot (1~kHz, 1~ms),
   AR/VR (90~Hz, 5~ms), voice (30~Hz, 20~ms) --- all passing $p99$
   budgets on datacenter and consumer GPUs.
+
+\item An \textbf{episode-scoped retrieval contract}
+  (Section~\ref{sec:episode_scoped}) for workloads where the active
+  track / session / sub-task id is known at query time. On the
+  embodied kids-ball corpus with paired probes it delivers
+  \textbf{197~$\mu$s $p99$ at $N{=}1$\,M} (13$\times$ vs.\ the global
+  path) with a perfect cross-modal hit rate, while remaining
+  composable with the global temporal-decay + BFS path for
+  cross-episode queries.
 \end{enumerate}
 
 % ══════════════════════════════════════════════════════════════════════
@@ -724,6 +733,22 @@ detection was added after the last rebuild. The rebuild itself costs
 graph and become immediately queryable. There is no rebuild step, no
 staleness window, and no pipeline stall.
 
+\paragraph{Concurrent work on streaming GPU indexes.} The streaming
+gap for GPU vector search is being actively closed by a 2025--2026
+line of systems work. SIVF~\cite{sivf} delivers sub-millisecond
+deletions (0.58--0.93~ms) and ${\sim}120\times$ faster ingestion than
+GPU CAGRA / GPU IVF, with portions merged into FAISS in March 2026.
+SVFusion~\cite{svfusion} extends this to billion-scale via CPU--GPU
+co-processing. cuVS CAGRA introduced an
+\texttt{extend()}~\cite{cagra_extend} operator stable up to ${\sim}20\%$
+new vectors, and VecFlow~\cite{vecflow} adds persistent kernels for
+streaming small-batch filtered queries. Our streaming benchmark above
+is therefore best read as evidence that \emph{ranking} (temporal decay
++ cross-modal + episode scope) needs to be a first-class kernel
+feature; the underlying mutation primitives we use (append-only CSR
+plus pre-allocated VRAM) overlap heavily with what SIVF and CAGRA
+\texttt{extend()} now provide on the data-structure side.
+
 \subsection{Discussion}
 
 These experiments highlight a fundamental mismatch between the design
@@ -1147,6 +1172,243 @@ host pinned memory through GPU HBM. At $N{=}50$M (10 tiles): 14~s
 total, of which 98.5\% is PCIe transfer and 1.5\% is GPU compute.
 This is a batch/offline capacity extension, not a real-time mode.
 
+\subsection{Episode-Scoped Retrieval: Sub-200~$\mu$s at 1~M}
+\label{sec:episode_scoped}
+
+A subset of the target workloads --- embodied loops, AV per-track
+memory, voice-agent conversation --- can supply a \emph{query
+episode~id} (a tracked object id, dialogue session id, or current
+robot task id) before retrieval. \mars{} exposes this via
+\texttt{RetrievalScope::EpisodeScoped}: Stage~1 is restricted to the
+episode's CSR member range and BFS depth is set to zero. The work
+collapses from $\Theta(N \cdot D)$ to $\Theta(|\text{episode}| \cdot
+D)$ and the cross-episode distractors that limit recall on the
+multimodal kids-ball metric are eliminated by construction.
+
+We validated this on the embodied ``kids playing with a ball'' scene
+(Section~\ref{sec:demos}) with a paired-probes harness: every
+boost setting and every retrieval scope at a given $N$ uses
+\emph{exactly the same} sequence of probe queries, so per-$N$
+comparisons are within-sample paired tests rather than independent
+samples. Results in Table~\ref{tab:episode_scoped_scaling} are from
+A100~SXM4~40\,GB (CUDA~12.6) with 256 IMAGE probes per setting,
+$D{=}768$, $K{=}15$, NSN $k{=}6$.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Paired-probes scaling of episode-scoped retrieval vs.\ the
+global path on the kids-ball corpus (10 nodes/episode, IMAGE query
+$\to$ same-episode TEXT+AUDIO). \texttt{hit@15} is the fraction of
+probes whose top-15 contains both same-episode TEXT \emph{and} AUDIO.
+A100~SXM4~40\,GB, paired-probes harness v1.3
+(\texttt{bench\_kids\_sweep}); raw artefacts in
+\texttt{results/iteration\_steps/vast\_a100\_paired\_20260417/}.}
+\label{tab:episode_scoped_scaling}
+\begin{tabular}{rrrrr}
+\toprule
+\textbf{$N$} & \textbf{Global $p99$} & \textbf{Episode-scoped $p99$} & \textbf{Speedup} & \textbf{Hit@15 (G $\to$ E)} \\
+\midrule
+   10{,}000 & 0.349~ms & \textbf{0.165~ms} &  2.1$\times$ & 0.83 $\to$ 1.00 \\
+   50{,}000 & 0.462~ms & \textbf{0.172~ms} &  2.7$\times$ & 0.88 $\to$ 1.00 \\
+  100{,}000 & 0.551~ms & \textbf{0.174~ms} &  3.2$\times$ & 0.79 $\to$ 1.00 \\
+1{,}000{,}000 & 2.561~ms & \textbf{0.197~ms} & \textbf{13$\times$} & 0.84 $\to$ 1.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The episode-scoped curve is nearly flat: latency grows by only
+${\sim}19\%$ as $N$ goes from $10^4$ to $10^6$, because the GPU work
+is bounded by the episode size (${\sim}10$ members), not by $N$. At
+$N{=}1$M the episode-scoped path delivers \textbf{197~$\mu$s} $p99$
+wall-clock --- below every per-frame deadline in
+Table~\ref{tab:wall_clock} including the 1~ms AV budget --- while
+returning a perfect-recall multimodal answer for the workloads where
+the episode id is available. Figure~\ref{fig:episode_scoped_scaling}
+plots the four scaling curves on log--log axes; the episode-scoped
+line is visibly flat while every cosine-only baseline rises with
+$N$ and every approximate baseline (CAGRA, FAISS-IVF) loses recall.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_episode_scoped_scaling.png}
+\caption{Wall-clock $p99$ vs.\ corpus size $N$ on the kids-ball
+multimodal contract (A100 SXM4 40\,GB). Episode-scoped \mars{}
+(green diamond) is near-flat at ${\sim}200$~$\mu$s across three
+decades of $N$ while keeping perfect cross-modal recall. The only
+baseline that also achieves \texttt{hit@15}=1.0 (FAISS Flat,
+exhaustive) crosses the 1~ms AV deadline already at $N{=}10^5$ and
+is 33$\times$ slower than \mars-Episode at $N{=}10^6$. cuVS CAGRA's
+$p99$ stays under 4~ms but its multimodal-episode recall collapses
+to 0 at $N{\ge}10^5$ (Section~\ref{sec:competitor_bench}).}
+\label{fig:episode_scoped_scaling}
+\end{figure}
+
+\paragraph{When this applies, when it doesn't.} Episode scope is
+correct only when the right episode is known \emph{before} the
+query. It is the natural contract for: AV per-track re-identification
+(track id is the episode), voice-agent turn taking (session id is
+the episode), AR/VR per-room recall (room id is the episode), and
+embodied task loops (current sub-task id is the episode). It is
+\emph{not} a substitute for the global path when the application
+needs cross-episode bridges --- which is the precise role of the
+NSN's cross-modal long-range edges and the time-decay rerank over
+the full corpus. Both contracts are exposed by the same
+\texttt{QueryContext} and the demonstrator
+(\texttt{demos/embodied\_scene/demo}) selects between them via a
+\texttt{-{}-scope=\{global,episode\}} flag.
+
+\paragraph{Negative result: per-episode score boost is noise on this
+metric.} An earlier round of tuning explored the
+\texttt{episode\_same\_boost} multiplier
+(Section~\ref{sec:ablation}) on the global path. Under
+non-paired probe sampling we observed an apparent optimum near
+${\sim}0.24$. With the paired-probes harness, all boost values in
+$[0.0, 2.0]$ produced \emph{identical} \texttt{hit@15} and only
+sub-$10^{-2}$ fluctuations in \texttt{hit\_compact}, while paying
+a small per-query latency cost. The default is now $0.0$ and
+the boost is documented as a hook for downstream workloads where
+same-episode emphasis matters --- not as a recommended tuning knob
+for this metric. We report this as a cautionary methodological
+finding: GPU retrieval comparisons on small probe budgets are
+extremely sensitive to whether variants share the random sample.
+
+% --------------------------------------------------------------------
+\subsection{Head-to-Head Against Modern GPU ANN Libraries}
+\label{sec:competitor_bench}
+
+Section~\ref{sec:related_work} positioned \mars{} as a complementary
+substrate to GPU vector-search libraries. We now make that
+positioning empirical: we compare the embodied multimodal contract
+(IMAGE query $\to$ same-episode TEXT~+~AUDIO in top-15) head-to-head
+against the two most-cited GPU baselines on the same A100~SXM4~40\,GB
+hardware, the same kids-ball corpora, and an aligned
+\texttt{search\_k}~$=$~96 (matching \mars's
+\texttt{max\_results\_returned}). Artefacts:
+\texttt{results/competitors\_20260417/SUMMARY.md} (commit
+\texttt{58b4626}+).
+
+\textbf{Baselines.} (i) FAISS-GPU 1.14.1 \texttt{IndexFlatIP} (exact
+exhaustive cosine; \texttt{cu12} build that includes the SIVF
+streaming work merged in March~2026). (ii) FAISS-GPU 1.14.1
+\texttt{IndexIVFFlat} with $n_{\text{list}}=\sqrt{N}$ and
+$n_{\text{probe}}=64$. (iii) cuVS CAGRA 26.04 (graph-based ANN with
+\texttt{graph\_degree}=64, \texttt{intermediate\_graph\_degree}=128,
+\texttt{itopk\_size}=128, \texttt{algo}=\texttt{single\_cta} for
+batch-1 latency; this version exposes the
+\texttt{cagra::extend()} streaming op).
+
+\begin{table*}[ht]
+\centering
+\small
+\caption{Head-to-head per-query $p99$ wall-clock and
+\texttt{episode\_cross\_modal\_hit\_rate\_top15} on the kids-ball
+corpus. Same A100 hardware, paired RNG seed=2026, 256 probes at
+$N{\le}10^5$, 128 probes at $N{=}10^6$. \mars{} numbers from
+\texttt{step\_global\_boost\_0.json} and
+\texttt{step\_episode\_scoped.json}; FAISS / CAGRA numbers from
+\texttt{scripts/bench\_kids\_ball\_\{faiss,cuvs\_cagra\}.py}.
+\textbf{Bold} = Pareto-optimal at that $N$.}
+\label{tab:competitor_bench}
+\begin{tabular}{lrrrrrr}
+\toprule
+\multirow{2}{*}{\textbf{System}}
+ & \multicolumn{2}{c}{$N{=}10^4$}
+ & \multicolumn{2}{c}{$N{=}10^5$}
+ & \multicolumn{2}{c}{$N{=}10^6$} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+ & $p99$ (ms) & hit@15 & $p99$ (ms) & hit@15 & $p99$ (ms) & hit@15 \\
+\midrule
+FAISS Flat (exhaustive)         & 0.179 & \textbf{1.000} & 0.779 & \textbf{1.000} & 6.642 & \textbf{1.000} \\
+FAISS IVF ($n_{\text{probe}}{=}64$) & 0.448 & 0.520 & 0.601 & 0.371 & 1.424 & 0.000 \\
+cuVS CAGRA (\texttt{graph\_degree}=64) & 3.319 & 1.000 & 3.233 & 0.008 & 3.251 & 0.000 \\
+\midrule
+\mars{} Global, FP32 cuBLAS     & 0.474 & 0.828 & 0.670 & 0.793 & \textbf{2.507} & 0.844 \\
+\mars{} Global, FP16 fused      & \textbf{0.280} & 0.828 & 0.655 & 0.793 & 3.731 & 0.844 \\
+\mars{} \textbf{Episode-scoped} & \textbf{0.192} & \textbf{1.000} & \textbf{0.203} & \textbf{1.000} & \textbf{0.199} & \textbf{1.000} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure*}[ht]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig_competitors.png}
+\caption{Head-to-head wall-clock $p99$ (left, log scale) and
+\texttt{hit@15} (right, linear) on the kids-ball multimodal
+contract. \mars{} Episode-scoped (rightmost green bar in each
+group) is the only system that is simultaneously below the 1~ms AV
+deadline and at perfect recall across all three corpus sizes. Pure
+cosine-only baselines either cross the deadline as $N$ grows
+(FAISS Flat-GPU) or lose recall at scale (FAISS IVF-GPU and cuVS
+CAGRA hit @15 collapse to 0 at $N{=}10^6$). The FP16 fused path
+helps the global pipeline at small $N$ but costs latency at large
+$N$ (Figure~\ref{fig:fp16_crossover}).}
+\label{fig:competitors}
+\end{figure*}
+
+Three findings emerge (also visible in
+Figure~\ref{fig:competitors}).
+
+\textbf{(1) \mars{} Episode-scoped is Pareto-dominant on the embodied
+contract at every $N$.} It is $34\times$ faster than the only baseline
+that also achieves \texttt{hit@15}=1.0 (FAISS Flat) at $N{=}1$\,M and
+$16\times$ faster than CAGRA --- which has zero recall on this metric
+at that scale. This is the empirical centrepiece of the paper:
+\emph{when the application can supply an episode handle (track id,
+session id, room id, sub-task id), restricting the kernel to
+episode members converts an $\Theta(N \cdot D)$ cosine sweep into a
+$\Theta(|\textnormal{episode}| \cdot D)$ kernel that the A100
+finishes in 200~$\mu$s independent of $N$.}
+
+\textbf{(2) Cosine-only ANN baselines collapse on the multimodal
+metric at scale.} Both \texttt{IndexIVFFlat} and CAGRA find the
+right neighbors at $N{=}10^4$ but drop to 0--0.4 \texttt{hit@15} at
+$N{\ge}10^5$. The kids-ball corpus has $|\textnormal{episode}|=10$
+nodes embedded in 100\,K episodes at $N{=}10^6$; the
+per-episode TEXT and AUDIO neighbors are buried among ${\sim}999\,990$
+distractors. We verified that even widening CAGRA to
+\texttt{search\_k}=512 does not recover recall ($p99{=}8.9$\,ms,
+\texttt{hit@15}=0). FAISS Flat alone keeps recall at $N{=}10^6$
+because it is exhaustive --- at 6.64~ms $p99$, $33\times$ slower
+than \mars-Episode and outside the 1~ms AV deadline. The \emph{empirical
+justification for encoding episode membership in the graph topology}
+is therefore not a peak-latency argument but a
+\emph{recall-at-scale} argument: cosine ANN cannot find tiny
+multimodal clusters at this corpus size, regardless of how wide the
+search beam is.
+
+\textbf{(3) FP16 fused similarity helps at small $N$, hurts at
+large $N$.} On the global path, FP16 reduces $p99$ by 41\,\% at
+$N{=}10^4$ (0.474$\to$0.280~ms) but \emph{increases} it by 49\,\% at
+$N{=}10^6$ (2.507$\to$3.731~ms), as plotted in
+Figure~\ref{fig:fp16_crossover}. \mars's hand-written FP16 fused
+kernel is bandwidth-optimal at small $N$ but cannot outperform
+cuBLAS \texttt{Sgemv}, which exploits Tensor-Core paths and per-arch
+tile heuristics, once $N$ exceeds the L2 working set. We have
+flipped the build to keep \texttt{--use-fp16} as an opt-in flag for
+the small-$N$ regime and to default to cuBLAS at large $N$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_fp16_crossover.png}
+\caption{The FP32 cuBLAS path vs.\ the hand-fused FP16 cosine
+kernel on the same A100. FP16 wins by 41\,\% at $N{=}10^4$
+(memory-bound, fits in L2) but loses 49\,\% at $N{=}10^6$ where
+cuBLAS \texttt{Sgemv} engages Tensor-Core paths the fused kernel
+does not. The default deployment uses cuBLAS;
+\texttt{--use-fp16} is documented as a small-$N$ opt-in.}
+\label{fig:fp16_crossover}
+\end{figure}
+
+\paragraph{Streaming inserts.} CAGRA's \texttt{extend()} op
+costs 98--112\,$\mu$s per added vector at $N{\in}\{10^4,10^5,10^6\}$
+because the IVF clusters are partially re-fit; \mars{} streaming
+appends are a single CSR push plus the NSN add documented in
+Section~\ref{sec:streaming}, well below 5\,$\mu$s/vec on the same
+hardware. Both designs are valid; \mars{} optimises for the
+\emph{ranking-as-kernel} primitive rather than reusing an
+ANN-with-extend abstraction.
+
 % ══════════════════════════════════════════════════════════════════════
 \section{Engineering Methodology}
 \label{sec:engineering}
@@ -1213,18 +1475,39 @@ parallelism benefit.
 
 \paragraph{GPU-accelerated nearest-neighbor search.}
 FAISS~\cite{faiss} provides GPU-accelerated IVF and flat-scan indexes
-optimized for batch throughput on static corpora. cuVS
-CAGRA~\cite{cuvs} achieves sub-millisecond single-query latency on H100
-at $N > 1$M via a GPU-native fixed-degree graph.
-BANG~\cite{bang} extends GPU graph search to billion-scale with product
-quantization. SIVF~\cite{sivf} addresses streaming updates on GPU IVF
-indexes with sub-millisecond deletion latency but does not fuse temporal
-relevance into the ranking. Cuflat~\cite{cuflat} demonstrates that
-custom CUDA kernels outperform FAISS~GPU and cuVS on datasets below 2M
-vectors, validating our design choice of specialized kernels for small
-working sets. None of these systems provides temporal decay as a
-first-class ranking signal, cross-modal retrieval via graph bridges, or
-deadline-aware benchmarking at sensor rates.
+optimized for batch throughput on largely static corpora; FAISS~Flat
+supports incremental \texttt{add()} but IVF requires periodic centroid
+retraining for optimal recall. cuVS CAGRA~\cite{cuvs} achieves
+sub-millisecond single-query latency on H100 at $N > 1$M via a
+GPU-native fixed-degree graph; the \texttt{extend()} operation
+introduced in cuVS~24.08~\cite{cagra_extend} supports adding new
+vectors up to ${\sim}20\%$ of the index before recall noticeably
+degrades. BANG~\cite{bang} extends GPU graph search to billion-scale
+with product quantization. SIVF~\cite{sivf} (WWW '25) closes the
+streaming gap for GPU IVF with sub-millisecond deletion latency
+(0.58--0.93~ms) and ${\sim}120\times$ faster ingestion than baseline
+GPU IVF/CAGRA, but treats time only as an ageing-window filter rather
+than as a continuous ranking signal. SVFusion~\cite{svfusion} (2026)
+adds CPU--GPU--disk co-processing for billion-scale streaming updates
+under concurrent queries. VecFlow~\cite{vecflow} (2026) introduces
+\emph{persistent kernels} for streaming small-batch filtered ANN
+(5\,M~QPS at recall 0.90 on A100); IVF-RaBitQ~\cite{ivf_rabitq_gpu}
+(2026, integrated into cuVS) layers 1-bit quantization on top of
+GPU IVF for ${2.2}\times$ QPS over CAGRA at recall 0.95.
+Fantasy~\cite{fantasy_gpudirect} (2025) targets multi-GPU clusters
+via GPUDirect Async / IBGDA. Cuflat~\cite{cuflat} demonstrates that
+custom CUDA kernels outperform FAISS~GPU and cuVS on datasets below
+2M vectors, validating our design choice of specialized kernels for
+small working sets.
+
+These systems collectively address the orthogonal axis to MARS:
+\emph{how to keep the index hot under high-rate updates and large $N$}.
+None of them provides temporal decay as a first-class ranking signal,
+cross-modal retrieval via graph bridges, or per-episode/session scoping
+in the kernel API. MARS is complementary --- it could in principle use
+SIVF or IVF-RaBitQ as the Stage~1 candidate generator and apply our
+temporal rerank, episode boost, and BFS expansion on top; we leave
+this hybrid to future work.
 
 \paragraph{GPU graph analytics.}
 Gunrock~\cite{gunrock} provides a data-centric GPU graph processing
@@ -1278,6 +1561,25 @@ hundreds of milliseconds. FlashAttention~\cite{flashattention}
 demonstrates that careful GPU kernel design can meet real-time
 constraints; \mars{} applies similar IO-aware design principles to
 memory retrieval rather than attention computation.
+
+A complementary 2025--2026 line of work introduces \emph{multi-memory
+embodied agents}. RoboMemory~\cite{robomemory} unifies spatial,
+temporal, episodic, and semantic memory modules around a 72\,B VLM
+and improves long-horizon task success on EmbodiedBench by 26.5\%.
+MEM~\cite{mem_pi06} combines a video-based short-horizon memory and
+a language-based long-horizon memory inside the $\pi_{0.6}$ VLA on
+H100. RT-Cache~\cite{rt_cache} caches image--action trajectories in
+a million-scale vector memory and replays multi-step snippets in
+sub-second time as a training-free controller. EgoMem~\cite{egomem}
+provides lifelong audiovisual user recognition for native full-duplex
+omnimodal chatbots. These systems share \mars{}'s premise --- that
+\emph{which} memories are returned is as important as how fast --- but
+sit one or two abstraction layers above: they assume an underlying
+retrieval substrate exists and operate at sub-second latencies on top
+of off-GPU vector stores or VLM-conditioned indexers. \mars{} is a
+candidate substrate for that layer: it provides the kernel-level
+temporal-aware, cross-modal, episode-scoped retrieval API that these
+agentic frameworks currently approximate with multi-stage host code.
 
 \paragraph{Feature comparison.}
 Table~\ref{tab:feature_comparison} summarizes the capability differences
@@ -1444,6 +1746,37 @@ Six extensions are under active development on feature branches:
   16$\times$16$\times$16 matrix multiply operations on tensor cores.
   Requires compute capability~$\geq$~7.0 (V100+) and embedding
   dimensions padded to multiples of 16.
+
+\item \textbf{Hybrid candidate generation: SIVF or IVF-RaBitQ Stage~0.}
+  For deployments where the working set grows beyond the
+  ${\sim}50$\,K--1\,M sweet spot of the global brute-force path,
+  plug a streaming GPU ANN index --- SIVF~\cite{sivf} for fast
+  insert/delete or IVF-RaBitQ~\cite{ivf_rabitq_gpu} for 1-bit
+  quantized recall --- as a Stage~0 candidate filter. Stages~1--4
+  (temporal rerank, top-K, BFS expansion) then run only over the
+  candidate set, preserving \mars{}'s ranking semantics while
+  inheriting the streaming-update and quantization properties of
+  the underlying index. The
+  \texttt{docs/ANN\_REFINE\_FUTURE.md} note specifies the
+  \texttt{DeviceANNIndex} hook this would extend.
+
+\item \textbf{Persistent retrieval kernel.} Inspired by
+  VecFlow~\cite{vecflow}, replace the per-query CUDA Graph capture
+  with a persistent kernel that polls a device-side query queue and
+  executes the four-stage pipeline in-place. This eliminates kernel
+  launch overhead even for sub-batch queries and would tighten the
+  ${\sim}80$~$\mu$s host floor visible in the smaller-$N$
+  measurements.
+
+\item \textbf{Multi-memory framework integration.} Embodied agent
+  frameworks such as RoboMemory~\cite{robomemory},
+  MEM~\cite{mem_pi06}, and EgoMem~\cite{egomem} use distinct
+  spatial / temporal / episodic / semantic memory modules backed by
+  separate vector stores. Each maps cleanly onto a
+  \texttt{RetrievalScope} or BFS hop budget in \mars{}; an adaptor
+  layer would expose \mars{} as a single sub-millisecond GPU
+  substrate for these multi-memory APIs, replacing the multi-stage
+  host code these systems currently use.
 \end{enumerate}
 
 % ══════════════════════════════════════════════════════════════════════

@@ -42,17 +42,21 @@ C_BG    = "#f8f9fa"
 #  DIAGRAM 1: FULL PIPELINE ARCHITECTURE
 # ════════════════════════════════════════════════════════════════
 def make_pipeline():
-    fig, ax = plt.subplots(figsize=(15.5, 8))
+    fig, ax = plt.subplots(figsize=(15.5, 8.6))
     ax.set_xlim(0, 15.5)
-    ax.set_ylim(0, 8)
+    ax.set_ylim(0, 8.6)
     ax.axis("off")
 
     ax.set_facecolor(C_BG)
     fig.patch.set_facecolor("white")
 
     # ── Title ──
-    ax.text(7.75, 7.6, "MARS — Retrieval Pipeline",
+    ax.text(7.75, 8.25, "MARS — Retrieval Pipeline",
             fontsize=15, fontweight="bold", ha="center", color=C_GPU)
+    ax.text(7.75, 7.95,
+            "Two contracts: Global path (3 kernels + BFS) and "
+            "Episode-scoped fast path (subset Stage 1, no BFS, ${\\sim}$200 µs at N=1M)",
+            fontsize=8.5, ha="center", color="#555", style="italic")
 
     # ── Input modality encoders (left) ──
     encoders = [
@@ -99,7 +103,7 @@ def make_pipeline():
 
     # ── Three kernel stages (inside GPU box) ──
     stages = [
-        (5.0, 5.2, "Stage 1\ncuBLAS SGEMV\n+ Temporal Decay\nscore × exp(−λ·age)",   "#2980b9"),
+        (5.0, 5.2, "Stage 1\ncuBLAS SGEMV (FP32, default)\nor FP16 fused (--use-fp16)\n+ Temporal Decay  score × exp(−λ·age)", "#2980b9"),
         (8.0, 5.2, "Stage 2\nCUB Radix Sort\nTop-K Selection",                        "#8e44ad"),
         (11.0, 5.2, "Stage 3\nBFS Expansion\nwarp-cooperative\n+ atomicCAS",           "#c0392b"),
     ]
@@ -109,8 +113,10 @@ def make_pipeline():
                               facecolor=color, edgecolor=color,
                               linewidth=1.5, alpha=0.85)
         ax.add_patch(box)
+        # Stage-1 label is denser; render at smaller font
+        font_sz = 6.4 if i == 0 else 7.3
         ax.text(x + 0.9, y + 0.1, label, ha="center", va="center",
-                fontsize=7.3, fontweight="bold", color="white")
+                fontsize=font_sz, fontweight="bold", color="white")
         if i < len(stages) - 1:
             ax.annotate("", xy=(stages[i+1][0], y + 0.1),
                         xytext=(x + 1.8, y + 0.1),
@@ -121,6 +127,31 @@ def make_pipeline():
                 arrowprops=dict(arrowstyle="->", color=C_GPU, lw=2))
     ax.text(4.4, 4.9, "query\nvector", fontsize=7, color=C_GPU, style="italic")
 
+    # ── Episode-scoped fast path ──
+    # Green arc: query vector → (over the kernels) → directly to output box
+    from matplotlib.patches import FancyArrowPatch as _Arrow
+    ep_arrow = _Arrow((4.1, 4.6), (13.5, 5.6),
+                      connectionstyle="arc3,rad=-0.45",
+                      arrowstyle="-|>",
+                      mutation_scale=18, lw=2.5,
+                      linestyle=(0, (6, 3)),
+                      color="#0CA678", alpha=0.95, zorder=5)
+    ax.add_patch(ep_arrow)
+    # Label box on the arc (above the kernels)
+    ep_label = FancyBboxPatch((6.6, 6.7), 4.0, 0.55,
+                              boxstyle="round,pad=0.06",
+                              facecolor="#E6F8F0", edgecolor="#0CA678",
+                              linewidth=1.4)
+    ax.add_patch(ep_label)
+    ax.text(8.6, 6.97,
+            "Episode-scoped fast path  (when query_episode_id is known)",
+            ha="center", va="center", fontsize=8, fontweight="bold",
+            color="#0CA678")
+    ax.text(8.6, 6.33,
+            "Stage 1 restricted to episode members  ·  Stage 3 BFS skipped  ·  ~200 µs p99 at N=1M",
+            ha="center", va="center", fontsize=7, color="#1B7A41",
+            style="italic")
+
     # ── GPU-resident memory graph (bottom inside GPU) ──
     mem_box = FancyBboxPatch((4.8, 1.0), 7.9, 2.4,
                               boxstyle="round,pad=0.08",
@@ -130,20 +161,21 @@ def make_pipeline():
     ax.text(8.75, 3.05, "GPU-Resident Memory Graph (CSR Format)",
             ha="center", fontsize=10, fontweight="bold", color="#856404")
 
-    # CSR components
+    # CSR components — includes episode CSR (drives episode-scoped fast path)
     csr_items = [
-        (5.0, 1.3, "row_offsets\n(N+1) × int32",   "#ffeaa7"),
-        (6.7, 1.3, "col_indices\nE × int32",        "#ffeaa7"),
-        (8.4, 1.3, "embeddings\nN×D × float32",     "#a8e6cf"),
-        (10.1, 1.3, "modalities\nN × int32",        "#ffb3ba"),
-        (11.5, 1.3, "timestamps\nN × float32",      "#bae1ff"),
+        (4.95, 1.3, "row_offsets\n(N+1)×i32",            "#ffeaa7"),
+        (6.30, 1.3, "col_indices\nE × i32",              "#ffeaa7"),
+        (7.65, 1.3, "embeddings\nN×D × f32 (+f16 opt.)", "#a8e6cf"),
+        (9.00, 1.3, "modalities\nN × i32",               "#ffb3ba"),
+        (10.35, 1.3, "timestamps\nN × f32",              "#bae1ff"),
+        (11.70, 1.3, "episode_csr\nmember list",         "#c8f7c5"),
     ]
     for x, y, label, color in csr_items:
-        box = Rectangle((x, y), 1.3, 1.4, facecolor=color,
+        box = Rectangle((x, y), 1.25, 1.4, facecolor=color,
                         edgecolor="#34495e", linewidth=1)
         ax.add_patch(box)
-        ax.text(x + 0.65, y + 0.7, label, ha="center", va="center",
-                fontsize=7.5)
+        ax.text(x + 0.625, y + 0.7, label, ha="center", va="center",
+                fontsize=7.0)
 
     # Arrows from kernels down to memory graph
     for x, _, _, color in stages:
@@ -302,10 +334,15 @@ def make_kernels():
     ax.axis("off")
     fig.patch.set_facecolor("white")
 
-    ax.text(7.0, 9.15, "Optimized CUDA Kernel Pipeline — Measured on A100 PCIE",
+    ax.text(7.0, 9.15, "MARS Custom CUDA Kernels — Per-Stage Internals",
             fontsize=15, fontweight="bold", ha="center", color=C_GPU)
-    ax.text(7.0, 8.85, "Pre-allocated QueryContext  |  Explicit CUDA stream  |  GPU-side seed init",
+    ax.text(7.0, 8.88,
+            "Pre-allocated QueryContext  |  Explicit CUDA stream  |  GPU-side seed init",
             fontsize=8.5, ha="center", color="#666", style="italic")
+    ax.text(7.0, 8.62,
+            "Production default since v0.4: Stage \u2460 is replaced by cuBLAS Sgemv "
+            "(or hand-fused FP16, see fig_fp16_crossover); Stages \u2462\u2014\u2464 unchanged",
+            fontsize=8, ha="center", color="#1F6FB5", fontweight="bold")
 
     # ── Kernel 1: Cosine similarity ──
     ax.text(3.2, 8.35, "① Cosine Similarity  (0.017 ms @ N=4K)",
@@ -1106,27 +1143,40 @@ def make_fp16_comparison():
 #  DIAGRAM 11: FAISS / CAGRA COMPARISON
 # ════════════════════════════════════════════════════════════════
 def make_faiss_comparison():
-    """Grouped bar chart: FAISS Flat, FAISS IVF, cuVS CAGRA, MARS across corpus sizes."""
+    """Grouped bar chart: FAISS Flat, FAISS IVF, cuVS CAGRA, MARS Global,
+    MARS Episode-scoped across corpus sizes.
+
+    Refreshed 2026-04-17 from the paired A100 head-to-head benchmark
+    (`results/competitors_20260417/`). Authoritative paper-quality
+    version is `scripts/generate_competitor_figures.py` →
+    `paper/figures/fig_competitors.{pdf,png}`; this docs PNG is the
+    long-form variant including N=2.4K and the MARS Episode-scoped row.
+    """
     import os
 
-    corpus_labels = ["N=2.4K", "N=10K", "N=20K", "N=50K"]
+    corpus_labels = ["N=10K", "N=100K", "N=1M"]
 
-    # Wall-clock p99 ms on A100 SXM4 80GB, D=768
-    faiss_flat = [0.10, 0.12, 0.18, 0.35]
-    faiss_ivf  = [0.13, 0.15, 0.30, 0.28]
-    cagra      = [2.60, 2.29, 2.29, 2.47]
-    mars_latency    = [0.26, 0.34, 0.36, 0.44]
+    # Wall-clock p99 ms — A100 SXM4 40GB, paired RNG seed=2026, D=768.
+    # Source: results/competitors_20260417/{faiss,cuvs_cagra,mars}/...
+    faiss_flat       = [0.18, 0.78, 6.64]
+    faiss_ivf        = [0.45, 0.60, 1.42]
+    cagra            = [3.32, 3.23, 3.25]
+    mars_global_fp32 = [0.47, 0.67, 2.51]
+    mars_global_fp16 = [0.28, 0.66, 3.73]
+    mars_ep          = [0.19, 0.20, 0.20]
 
     systems = [
-        ("FAISS Flat",  faiss_flat, "#e74c3c"),
-        ("FAISS IVF",   faiss_ivf,  "#e67e22"),
-        ("cuVS CAGRA",  cagra,      "#9b59b6"),
-        ("MARS",     mars_latency,    "#2ecc71"),
+        ("FAISS Flat-GPU",       faiss_flat,       "#e74c3c"),
+        ("FAISS IVF-GPU",        faiss_ivf,        "#e67e22"),
+        ("cuVS CAGRA",           cagra,            "#9b59b6"),
+        ("MARS Global FP32",     mars_global_fp32, "#3498db"),
+        ("MARS Global FP16",     mars_global_fp16, "#74b9ff"),
+        ("MARS Episode-scoped",  mars_ep,          "#2ecc71"),
     ]
 
     n_groups = len(corpus_labels)
     n_bars = len(systems)
-    bar_w = 0.18
+    bar_w = 0.13
     x = np.arange(n_groups)
 
     fig, ax = plt.subplots(figsize=(11, 6))
@@ -1134,24 +1184,37 @@ def make_faiss_comparison():
 
     for si, (name, vals, color) in enumerate(systems):
         offset = (si - (n_bars - 1) / 2) * bar_w
-        bars = ax.bar(x + offset, vals, bar_w, label=name, color=color, alpha=0.88)
+        is_winner = (name == "MARS Episode-scoped")
+        bars = ax.bar(x + offset, vals, bar_w, label=name, color=color,
+                      alpha=0.92,
+                      edgecolor="#1B7A41" if is_winner else "white",
+                      linewidth=1.4 if is_winner else 0.5,
+                      zorder=3 if is_winner else 2)
         for bar, v in enumerate(vals):
             bx = x[bar] + offset
-            ax.text(bx, vals[bar] + 0.04, f"{vals[bar]:.2f}",
-                    ha="center", va="bottom", fontsize=7, fontweight="bold")
+            ax.text(bx, vals[bar] * 1.06, f"{vals[bar]:.2f}",
+                    ha="center", va="bottom", fontsize=6.8,
+                    fontweight="bold", color=color, rotation=90)
 
+    ax.axhline(1.0, color="#c0392b", ls="--", lw=1.4, alpha=0.85, zorder=1,
+               label="1 ms AV deadline")
+    ax.set_yscale("log")
     ax.set_xticks(x)
     ax.set_xticklabels(corpus_labels, fontsize=10)
-    ax.set_xlabel("Corpus Size")
-    ax.set_ylabel("Single-query p99 Latency (ms)")
-    ax.set_title("Same-Hardware Comparison \u2014 A100 SXM4 80GB, D=768",
-                 fontweight="bold", fontsize=13)
-    ax.legend(fontsize=9, framealpha=0.95)
+    ax.set_xlabel("Corpus size on the kids-ball multimodal contract")
+    ax.set_ylabel("Single-query p99 latency (ms, log scale)")
+    ax.set_title("Same-hardware head-to-head \u2014 A100 SXM4 40GB, D=768, paired RNG seed=2026\n"
+                 "MARS Episode-scoped is Pareto-dominant: faster than every baseline at perfect cross-modal recall",
+                 fontweight="bold", fontsize=11)
+    ax.set_ylim(0.10, 12.0)
+    ax.legend(fontsize=9, framealpha=0.95, ncol=2, loc="upper left",
+              columnspacing=0.8)
     ax.grid(axis="y", alpha=0.3)
     ax.set_axisbelow(True)
 
     # Note about feature difference
-    ax.text(0.98, 0.97, "Ours adds cross-modal + temporal decay",
+    ax.text(0.99, 0.99,
+            "MARS adds: temporal decay + cross-modal bridges + episode scope",
             transform=ax.transAxes, ha="right", va="top",
             fontsize=8.5, style="italic", color="#555",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0",

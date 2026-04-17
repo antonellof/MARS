@@ -1,0 +1,30 @@
+{
+  "tool": "bench_kids_ball_cuvs_cagra",
+  "corpus_path": "results/competitors_20260417/corpus/kids_1m.bin",
+  "note": "cuVS CAGRA cosine inner-product graph search; no temporal decay, no cross-modal bridges, no episode scope. Compare p99 latency to MARS global path; compare hit@15 to FAISS Flat.",
+  "configurations": [
+    {
+      "method": "cuvs_cagra_gpu_cosine_only",
+      "N": 1000000,
+      "D": 768,
+      "search_k": 96,
+      "itopk_size": 128,
+      "graph_degree": 64,
+      "intermediate_graph_degree": 128,
+      "num_queries": 128,
+      "build_ms": 6154.08892898995,
+      "p50_ms": 3.1676260114181787,
+      "p99_ms": 3.250986002967693,
+      "mean_ms": 3.1697830467010135,
+      "max_ms": 3.3520150027470663,
+      "episode_cross_modal_hit_rate_search_k": 0.0,
+      "episode_cross_modal_hit_rate_top15": 0.0
+    }
+  ],
+  "extend": {
+    "extend_n_added": 100000,
+    "extend_total_ms": 10557.224750009482,
+    "extend_per_vec_us": 105.5722475000948,
+    "note": "Random extra vectors (NOT same distribution as base); CAGRA recall guidance: stable up to ~20% additions (see cuVS docs)."
+  }
+}

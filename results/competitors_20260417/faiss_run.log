@@ -1,0 +1,19 @@
+=== FAISS @ 10k ===
+      "episode_cross_modal_hit_rate": 0.51953125,
+      "episode_cross_modal_hit_rate_top15": 0.51953125
+    }
+  ]
+}
+=== FAISS @ 100k ===
+      "episode_cross_modal_hit_rate": 0.37109375,
+      "episode_cross_modal_hit_rate_top15": 0.37109375
+    }
+  ]
+}
+=== FAISS @ 1m ===
+      "episode_cross_modal_hit_rate": 0.0,
+      "episode_cross_modal_hit_rate_top15": 0.0
+    }
+  ]
+}
+=== ALL_DONE ===

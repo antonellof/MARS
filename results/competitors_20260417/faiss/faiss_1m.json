@@ -1,0 +1,37 @@
+{
+  "tool": "bench_kids_ball_faiss",
+  "corpus_path": "results/competitors_20260417/corpus/kids_1m.bin",
+  "note": "Cosine-only vector search; compare latency to MARS sweep JSON; episode_hit uses search_k-wide neighbors; not BFS-expanded.",
+  "search_k": 96,
+  "configurations": [
+    {
+      "method": "faiss_flat_gpu_cosine_only",
+      "N": 1000000,
+      "D": 768,
+      "search_k": 96,
+      "num_queries": 256,
+      "p50_ms": 6.577735999599099,
+      "p99_ms": 6.64224500360433,
+      "mean_ms": 6.593632890314893,
+      "max_ms": 11.025746003724635,
+      "episode_cross_modal_hit_rate": 1.0,
+      "episode_cross_modal_hit_rate_top15": 1.0
+    },
+    {
+      "method": "faiss_ivf_gpu_cosine_only",
+      "N": 1000000,
+      "D": 768,
+      "search_k": 96,
+      "nlist": 1000,
+      "nprobe": 64,
+      "num_queries": 256,
+      "p50_ms": 1.3079170021228492,
+      "p99_ms": 1.4237870054785162,
+      "mean_ms": 1.3291779301880524,
+      "max_ms": 5.691216996638104,
+      "recall_at_k_vs_flat": 0.7506510416666666,
+      "episode_cross_modal_hit_rate": 0.0,
+      "episode_cross_modal_hit_rate_top15": 0.0
+    }
+  ]
+}

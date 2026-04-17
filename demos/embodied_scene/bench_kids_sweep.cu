@@ -18,6 +18,14 @@
 //  Optional latency-aware ranking (pick best by composite - penalty * wall_p99_ms):
 //    ... --iterate-wall-ms-penalty 1.0
 //
+//  Path flags (iterate mode only — the global Stage 1 path is what they tune):
+//    --use-fp16        Use FP16 fused similarity (halves Stage 1 bandwidth, FP32 accumulate).
+//                      Disables cuBLAS SGEMV in this run and uploads a half-precision copy
+//                      of the embedding matrix.
+//    --use-cuda-graph  Capture+replay the global retrieval pipeline as a CUDA Graph after
+//                      the first warm query. Episode-scoped reference always runs without
+//                      capture (different scope = recapture).
+//
 //  Binary corpus format (little-endian) for FAISS baseline scripts:
 //    uint32 magic 'KIDS' (0x5344494b)
 //    uint32 version (=1)
@@ -131,9 +139,18 @@ std::vector<float> parse_boost_list(const char* s) {
 
 // Returns 0 on success. Writes step_boost_<milli>.json per boost and SUMMARY.{json,md}.
 // If wall_ms_penalty > 0, best global step maximizes (composite - wall_ms_penalty * wall_p99_ms).
+//
+// Optional context flags:
+//   use_fp16:        opt into FP16 fused similarity (Stage 1 bandwidth halved). Falls back
+//                    to cuBLAS or scalar FP32 if disabled. Toggle via --use-fp16.
+//   use_cuda_graph:  capture+replay the global retrieval pipeline as a CUDA Graph (skips
+//                    per-launch overhead). Currently only valid for the global path; the
+//                    episode-scoped reference always runs without graph capture. Toggle
+//                    via --use-cuda-graph.
 int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int32_t grid_probes,
                            const char* steps_dir, int32_t dim, int32_t top_k, int32_t max_results_host,
-                           int32_t query_ctx_max_k, uint32_t corpus_seed, double wall_ms_penalty) {
+                           int32_t query_ctx_max_k, uint32_t corpus_seed, double wall_ms_penalty,
+                           bool use_fp16 = false, bool use_cuda_graph = false) {
     if (boosts.empty()) {
         std::fprintf(stderr, "--boost-grid: empty list\n");
         return 1;
@@ -166,7 +183,15 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
     DeviceMemoryGraph dg = upload_to_device(g);
     upload_episode_ids(dg, corp.episode_ids.data(), g.num_nodes);
     upload_episode_csr(dg, ep_csr);
+    if (use_fp16) {
+        upload_fp16_embeddings(dg);
+    }
     QueryContext ctx = create_query_context(g.num_nodes, dim, query_ctx_max_k);
+    if (use_fp16) {
+        ctx.use_fp16   = true;
+        ctx.use_cublas = false;  // FP16 fused path is the alternative to cuBLAS SGEMV
+    }
+    ctx.use_cuda_graph = use_cuda_graph;
 
     struct StepRec {
         float   boost = 0;
@@ -257,13 +282,16 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         std::fprintf(fo, "  \"episode_cross_modal_hit_rate_top15\": %.6f,\n", rec.hit_t15);
         std::fprintf(fo, "  \"composite_score\": %.6f,\n", rec.score);
         std::fprintf(fo, "  \"ranking_score\": %.6f,\n", rec.ranking_score);
-        std::fprintf(fo, "  \"iterate_wall_ms_penalty\": %.6f\n", wall_ms_penalty);
+        std::fprintf(fo, "  \"iterate_wall_ms_penalty\": %.6f,\n", wall_ms_penalty);
+        std::fprintf(fo, "  \"use_fp16\": %s,\n", use_fp16 ? "true" : "false");
+        std::fprintf(fo, "  \"use_cuda_graph\": %s\n", use_cuda_graph ? "true" : "false");
         std::fprintf(fo, "}\n");
         std::fclose(fo);
         steps.push_back(rec);
-        std::fprintf(stderr, "[iterate] boost=%.3f -> comp=%.4f rank=%.4f wall_p99=%.3f kern_p99=%.3f "
-                             "hit_c=%.3f hit_t15=%.3f -> %s\n",
-                     double(boost), rec.score, rec.ranking_score, rec.wall_p99, rec.kern_p99, rec.hit_c,
+        std::fprintf(stderr, "[iterate] boost=%.3f fp16=%d graph=%d -> comp=%.4f rank=%.4f "
+                             "wall_p99=%.3f kern_p99=%.3f hit_c=%.3f hit_t15=%.3f -> %s\n",
+                     double(boost), int(use_fp16), int(use_cuda_graph),
+                     rec.score, rec.ranking_score, rec.wall_p99, rec.kern_p99, rec.hit_c,
                      rec.hit_t15, fname);
     }
 
@@ -345,6 +373,8 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         std::fprintf(fo, "  \"composite_score\": %.6f,\n", rec.score);
         std::fprintf(fo, "  \"ranking_score\": %.6f,\n", rec.ranking_score);
         std::fprintf(fo, "  \"iterate_wall_ms_penalty\": %.6f,\n", wall_ms_penalty);
+        std::fprintf(fo, "  \"use_fp16\": %s,\n", use_fp16 ? "true" : "false");
+        std::fprintf(fo, "  \"use_cuda_graph\": %s,\n", use_cuda_graph ? "true" : "false");
         std::fprintf(fo, "  \"note\": \"Different retrieval contract: rank within episode members only.\"\n");
         std::fprintf(fo, "}\n");
         std::fclose(fo);
@@ -384,10 +414,12 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
     }
     std::fprintf(fs, "{\n");
     std::fprintf(fs, "  \"tool\": \"mars-kids-boost-iterate\",\n");
-    std::fprintf(fs, "  \"version\": \"1.3\",\n");
+    std::fprintf(fs, "  \"version\": \"1.4\",\n");
     std::fprintf(fs, "  \"iterate_n\": %d,\n", grid_n);
     std::fprintf(fs, "  \"iterate_probes\": %d,\n", grid_probes);
     std::fprintf(fs, "  \"corpus_seed\": %u,\n", corpus_seed);
+    std::fprintf(fs, "  \"use_fp16\": %s,\n", use_fp16 ? "true" : "false");
+    std::fprintf(fs, "  \"use_cuda_graph\": %s,\n", use_cuda_graph ? "true" : "false");
     if (wall_ms_penalty > 0.0) {
         std::fprintf(fs,
             "  \"criterion\": \"maximize ranking_score = 2*hit_top15 + hit_compact - %.6f * wall_p99_ms "
@@ -483,6 +515,8 @@ int main(int argc, char** argv) {
     int32_t      iterate_n       = 10000;
     int32_t      iterate_probes  = NUM_PROBES;
     double       iterate_wall_ms_penalty = 0.0;
+    bool         iterate_use_fp16       = false;
+    bool         iterate_use_cuda_graph = false;
 
     const BenchVariant variants[] = {
         {"global_baseline", RetrievalScope::Global, 0.0f},
@@ -518,6 +552,10 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--iterate-wall-ms-penalty") == 0 && i + 1 < argc) {
             iterate_wall_ms_penalty = std::strtod(argv[++i], nullptr);
             if (iterate_wall_ms_penalty < 0.0) iterate_wall_ms_penalty = 0.0;
+        } else if (std::strcmp(argv[i], "--use-fp16") == 0) {
+            iterate_use_fp16 = true;
+        } else if (std::strcmp(argv[i], "--use-cuda-graph") == 0) {
+            iterate_use_cuda_graph = true;
         } else if (argv[i][0] != '-') {
             out_path = argv[i];
         }
@@ -537,7 +575,8 @@ int main(int argc, char** argv) {
             iterate_steps_dir ? iterate_steps_dir : "results/iteration_steps/latest";
         return run_boost_iterate_mode(bl, iterate_n, iterate_probes, sd, DIM, TOP_K,
                                       MAX_RESULTS_HOST, QUERY_CTX_MAX_K, CORPUS_SEED,
-                                      iterate_wall_ms_penalty);
+                                      iterate_wall_ms_penalty,
+                                      iterate_use_fp16, iterate_use_cuda_graph);
     }
 
     std::vector<std::vector<SweepRow>> rows_by_variant;

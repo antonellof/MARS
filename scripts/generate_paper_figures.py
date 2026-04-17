@@ -184,41 +184,73 @@ def fig_kernel_backends():
 #  FIG 4: Deadline compliance
 # ═══════════════════════════════════════════════════════════
 def fig_deadline():
-    fig, ax = plt.subplots(figsize=(7, 3.5))
+    fig, ax = plt.subplots(figsize=(7.5, 4.0))
 
-    demos   = ['Voice Agent\n(30 Hz)', 'AR/VR Spatial\n(90 Hz)',
-               'Humanoid Robot\n(1 kHz)', 'AV Perception\n(60 Hz)']
-    # Wall-clock bench values (latency_bench, consistent with abstract)
-    p99     = [0.880, 1.560, 0.760, 0.870]
-    budgets = [20.0, 5.0, 1.0, 1.0]
+    # Five workloads — added MARS Episode-scoped at N=1M (the new winner).
+    demos   = ['Voice Agent\n(30 Hz, N=10K)',
+               'AR/VR Spatial\n(90 Hz, N=10K)',
+               'Humanoid Robot\n(1 kHz, N=10K)',
+               'AV Perception\n(60 Hz, N=10K)',
+               'MARS Episode-scoped\n(any rate, N=1M)']
+    p99     = [0.880, 1.560, 0.760, 0.870, 0.197]
+    budgets = [20.0,  5.0,   1.0,   1.0,   1.0]
+    colors  = [C_GREEN, C_GREEN, C_GREEN, C_GREEN, '#0CA678']
 
     y = np.arange(len(demos))
-    h = 0.45
+    h = 0.5
 
-    ax.barh(y, p99, h, color=C_GREEN, edgecolor='white', linewidth=0.6,
-            label='Measured p99', zorder=3)
+    bars = ax.barh(y, p99, h, color=colors, edgecolor='white', linewidth=0.6,
+                   zorder=3)
+    # Highlight the MARS Episode-scoped row with a darker edge
+    bars[-1].set_edgecolor('#1B7A41')
+    bars[-1].set_linewidth(1.4)
 
     for i, (m, b) in enumerate(zip(p99, budgets)):
-        ax.plot(b, i, 'D', color=C_RED, markersize=9, zorder=5,
+        ax.plot(b, i, 'D', color=C_RED, markersize=10, zorder=5,
                 markeredgecolor='white', markeredgewidth=1)
         ax.plot([m, b], [i, i], '--', color=C_LIGHT, lw=1, zorder=2)
         pct = (1 - m/b) * 100
-        ax.text(b + 0.5, i, f'{pct:.0f}% headroom',
-                va='center', fontsize=10, color=C_GRAY, fontweight='bold')
+        # Print the measured value just to the right of the bar tip.
+        # For tight 1-ms budgets the bar-tip is near the diamond, so we
+        # vertically offset above-the-row to keep them separated.
+        if b >= 10:
+            ax.text(m + 0.20, i, f'{m:.2f} ms',
+                    va='center', ha='left', fontsize=9,
+                    color='#1F6FB5', fontweight='bold')
+        else:
+            ax.text(m, i + 0.30, f'{m:.2f} ms',
+                    va='bottom', ha='center', fontsize=8.5,
+                    color='#1B7A41' if i == len(demos) - 1 else '#1F6FB5',
+                    fontweight='bold')
+        # Place the headroom label BELOW the row to keep the bar/diamond
+        # area clean even when the budget is the same x as the diamond.
+        if b >= 10:
+            # Voice Agent: lots of room — keep label beyond the diamond
+            ax.text(b + 0.4, i, f'{pct:.0f}% headroom',
+                    va='center', ha='left', fontsize=9.5,
+                    color=C_GRAY, fontweight='bold')
+        else:
+            # Tight 1-ms / 5-ms budgets: label sits just below the row
+            ax.text(b + 0.05, i - 0.36, f'{pct:.0f}% headroom',
+                    va='top', ha='left', fontsize=9,
+                    color=C_GRAY, fontweight='bold')
 
     ax.set_yticks(y)
     ax.set_yticklabels(demos)
     ax.set_xlabel('Latency (ms)')
-    ax.set_title('Deadline Compliance -- All Demos PASS (A100 SXM4)',
-                 fontweight='bold')
-    ax.set_xlim(0, 26)
+    ax.set_title('Deadline Compliance -- All Demos PASS (A100 SXM4 40 GB)\n'
+                 'Episode-scoped delivers a perfect-recall multimodal answer with 80% headroom on the 1 ms AV deadline at N=1M',
+                 fontweight='bold', fontsize=10.5)
+    ax.set_xlim(0, 23)
 
-    measured_p = mpatches.Patch(color=C_GREEN, label='Measured p99')
+    measured_p = mpatches.Patch(color=C_GREEN, label='Measured p99 (global path)')
+    measured_e = mpatches.Patch(color='#0CA678', label='Measured p99 (episode-scoped)')
     budget_m = plt.Line2D([0], [0], marker='D', color='w',
-                           markerfacecolor=C_RED, markersize=9,
-                           label='Deadline budget', markeredgecolor='white')
-    ax.legend(handles=[measured_p, budget_m], loc='lower right',
-              framealpha=0.95, edgecolor='none')
+                          markerfacecolor=C_RED, markersize=9,
+                          label='Deadline budget', markeredgecolor='white')
+    ax.legend(handles=[measured_p, measured_e, budget_m],
+              loc='upper center', bbox_to_anchor=(0.5, -0.18),
+              framealpha=0.95, edgecolor='none', ncol=3)
 
     fig.tight_layout()
     save(fig, 'fig_deadline')

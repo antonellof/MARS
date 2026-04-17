@@ -1,0 +1,22 @@
+{
+  "tool": "mars-kids-boost-iterate",
+  "version": "1.4",
+  "iterate_n": 1000000,
+  "iterate_probes": 128,
+  "corpus_seed": 2026,
+  "use_fp16": true,
+  "use_cuda_graph": false,
+  "criterion": "maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)",
+  "iterate_wall_ms_penalty": 0.000000,
+  "best_global_episode_same_boost": 0.000000,
+  "best_global_composite_score": 2.664062,
+  "best_global_ranking_score": 2.664062,
+  "best_global_step_file": "results/competitors_20260417/mars/mars_1m_fp16/step_global_boost_0.json",
+  "episode_scoped_composite_score": 3.000000,
+  "episode_scoped_wall_p99_ms": 0.2490,
+  "episode_scoped_step_file": "results/competitors_20260417/mars/mars_1m_fp16/step_episode_scoped.json",
+  "steps": [
+    {"boost":0.000000,"file":"results/competitors_20260417/mars/mars_1m_fp16/step_global_boost_0.json","composite_score":2.664062,"ranking_score":2.664062,"wall_p99_ms":3.7306,"hit_top15":0.843750,"hit_compact":0.976562},
+    {"boost":-1.000000,"file":"results/competitors_20260417/mars/mars_1m_fp16/step_episode_scoped.json","composite_score":3.000000,"ranking_score":3.000000,"wall_p99_ms":0.2490,"hit_top15":1.000000,"hit_compact":1.000000}
+  ]
+}

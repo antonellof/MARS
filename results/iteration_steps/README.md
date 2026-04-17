@@ -37,6 +37,19 @@ mkdir -p results/iteration_steps/run_local
   --iterate-steps-dir results/iteration_steps/run_latency
 ```
 
+**Path flags (kernel pipeline variants, v1.4+ JSON):**
+
+```bash
+./demos/embodied_scene/bench_kids_sweep \
+  --boost-grid 0,0.25,0.5 --iterate-n 1000000 --iterate-probes 128 \
+  --use-fp16 --use-cuda-graph \
+  --iterate-steps-dir results/iteration_steps/run_fp16_graph_1m
+```
+
+- `--use-fp16` enables the FP16 fused similarity kernel (Stage 1 bandwidth halved, FP32 accumulate). Disables cuBLAS SGEMV in this run; pre-uploads a half-precision copy of the embedding matrix.
+- `--use-cuda-graph` captures and replays the global pipeline as a CUDA Graph after a single warm query (skips the per-launch overhead). The episode-scoped reference always runs without graph capture (different scope = different capture).
+- The path flags propagate into every `step_*.json` and into the iterate `SUMMARY.json` (`use_fp16`, `use_cuda_graph` fields), so artefacts are self-describing.
+
 Convenience: `make bench-kids-iterate`, `make bench-kids-iterate-refine`, `make bench-kids-iterate-refine-latency`, `make bench-kids-iterate-refine-micro`.
 
 **Practical large scale:** for hardware validation, treat **N = 1 000 000** as the routine upper bound (`make bench-kids-iterate-refine-micro-1m` or a custom grid at `--iterate-n 1000000`). Going beyond that is optional and mainly for VRAM-fill experiments below.

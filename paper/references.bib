@@ -320,3 +320,85 @@
   year      = {2024},
   doi       = {10.1109/ACCESS.2024.3406893}
 }
+
+% ─── 2025–2026 landscape: filtered-ANNS, quantized GPU ANN, and embodied memory ───
+
+@article{vecflow,
+  author  = {Wei, Jingyi and others},
+  title   = {{VecFlow}: A High-Performance Vector Data Management System for
+             Filtered-Search on {GPUs}},
+  journal = {arXiv preprint arXiv:2506.00812},
+  year    = {2026},
+  note    = {Persistent kernels for streaming small-batch filtered ANN at
+             5\,M QPS @ 90\% recall on A100.}
+}
+
+@article{ivf_rabitq_gpu,
+  author  = {Shi, Jifan and Gao, Jianyang and others},
+  title   = {{GPU}-Native Approximate Nearest Neighbor Search with
+             {IVF-RaBitQ}: Fast Index Build and Search},
+  journal = {arXiv preprint arXiv:2602.23999},
+  year    = {2026},
+  note    = {1-bit quantized GPU IVF integrated into NVIDIA cuVS;
+             2.2$\times$ QPS over CAGRA at recall 0.95.}
+}
+
+@inproceedings{cagra_extend,
+  author    = {Nolet, Corey and Wang, Yuhao and others},
+  title     = {Incremental Index Updates in {CUDA-ANN-Graph} ({CAGRA}):
+               The {extend()} Operation},
+  booktitle = {RAPIDS cuVS 24.08 release notes},
+  year      = {2024},
+  note      = {Supports adding new vectors to an existing CAGRA index;
+               recall stable up to ${\sim}20\%$ new vectors per dataset.}
+}
+
+@article{rt_cache,
+  author  = {Author, Anonymous},
+  title   = {{RT-Cache}: Training-Free Retrieval for Real-Time Manipulation},
+  journal = {arXiv preprint arXiv:2505.09040},
+  year    = {2025},
+  note    = {Hierarchical sub-second retrieval over million-scale
+             image--action vector memory; replays multi-step trajectories.}
+}
+
+@article{robomemory,
+  author  = {Anonymous and others},
+  title   = {{RoboMemory}: A Brain-inspired Multi-memory Agentic Framework
+             for Interactive Environmental Learning in Physical Embodied
+             Systems},
+  journal = {arXiv preprint arXiv:2508.01415},
+  year    = {2025},
+  note    = {Spatial / Temporal / Episodic / Semantic memory modules over
+             Qwen2.5-VL on A100; +26.5\% success on EmbodiedBench.}
+}
+
+@article{mem_pi06,
+  author  = {Anonymous and others},
+  title   = {{MEM}: Multi-Scale Embodied Memory for Vision Language Action
+             Models},
+  journal = {arXiv preprint arXiv:2603.03596},
+  year    = {2026},
+  note    = {Mixed-modal short- (video) plus long-horizon (language) memory
+             integrated with the $\pi_{0.6}$ VLA on H100.}
+}
+
+@article{egomem,
+  author  = {Anonymous and others},
+  title   = {{EgoMem}: Lifelong Memory Agent for Full-duplex Omnimodal
+             Models},
+  journal = {arXiv preprint arXiv:2509.11914},
+  year    = {2025},
+  note    = {Real-time audiovisual user recognition / personalisation for
+             native full-duplex omnimodal chatbots.}
+}
+
+@article{fantasy_gpudirect,
+  author  = {Liu, Yi and Qian, Chen},
+  title   = {{Fantasy}: Efficient Large-scale Vector Search on {GPU}
+             Clusters with {GPUDirect Async}},
+  journal = {arXiv preprint arXiv:2512.02278},
+  year    = {2025},
+  note    = {Pipelines vector search and inter-GPU RDMA via IBGDA;
+             targets distributed billion-scale ANN.}
+}

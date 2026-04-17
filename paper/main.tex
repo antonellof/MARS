@@ -598,7 +598,8 @@ $\bar{d}$ --- bounded by a constant independent of corpus size $N$
 \FOR{$\text{hop} = 0$ \TO $h-1$}
     \FOR{each node $v \in F_{\text{hop}}$ \textbf{(one warp per node)}}
         \FOR{each neighbor $u$ of $v$ \textbf{(stride-32 coalesced)}}
-            \IF{atomicCAS(visited[$u$], false, true)}
+            \STATE prev $\leftarrow$ atomicCAS(visited[$u$], 0, 1)
+            \IF{prev $= 0$}
                 \STATE score[$u$] $\leftarrow \max(\text{score}[v] \cdot \delta_{\text{prop}},\; \text{sim}[u] \cdot \alpha_{\text{bfs}})$
                 \STATE $F_{\text{hop}+1}$.append($u$)
             \ENDIF
@@ -610,7 +611,17 @@ $\bar{d}$ --- bounded by a constant independent of corpus size $N$
 \end{algorithmic}
 \end{algorithm}
 
-\paragraph{Score propagation parameters in line~12 of Algorithm~\ref{alg:pipeline}.} The two scalars
+\paragraph{atomicCAS contract used in lines~16--17.}
+We rely on the standard CUDA \texttt{atomicCAS(addr, cmp, val)}
+contract: the atomic returns the value previously stored at
+\texttt{addr}, and the swap to \texttt{val} succeeds iff that previous
+value equals \texttt{cmp}. The BFS expansion therefore writes to
+\texttt{score[$u$]} and pushes $u$ onto the next frontier exactly when
+the previous value of \texttt{visited[$u$]} was $0$ (unvisited),
+which guarantees that each node's score is written by exactly one
+warp regardless of multi-edge re-entry.
+
+\paragraph{Score propagation parameters in line~18 of Algorithm~\ref{alg:pipeline}.} The two scalars
 are explicit knobs of the BFS contract.
 $\delta_{\text{prop}} \in (0, 1]$ is a per-hop attenuation on the
 score inherited from the parent frontier node (default $0.85$,
@@ -715,6 +726,14 @@ but does not require centroid retraining or graph rebuild.
 \section{The Multimodal Neural Shortcut Network}
 \label{sec:nsn}
 
+\paragraph{A note on the name.} The ``Neural'' in NSN is retained
+for continuity with prior \mars{} releases and refers to its role
+as a \emph{neural-embedding} index --- not to a learned graph
+topology. The construction below is fully deterministic and contains
+no trained weights, gradient-tuned objectives, or learned edge
+selection; it is a Watts--Strogatz~\cite{wattsstrogatz} small-world
+graph extended with deterministic cross-modal bridges.
+
 \subsection{Construction}
 
 The NSN graph is built in five phases:
@@ -811,29 +830,39 @@ seeded at a hub grows logarithmically.
 
 \begin{proposition}[Episode-Scope Crossover]
 \label{prop:scope_crossover}
-Let $|\textnormal{ep}|$ be the size of the named episode and let
-$T_{\textnormal{ep}}(|\textnormal{ep}|)$ and $T_{\textnormal{glo}}(N)$
-be the wall-clock times of the episode-scoped and global retrieval
-paths respectively. The episode-scoped path is faster than the
-global path whenever
+Let $|\textnormal{ep}|$ be the size of the named episode, let $D$ be
+the embedding dimension in bytes (e.g.\ $4D{=}3072$ for FP32 at
+$D{=}768$), and let $B_{\textnormal{eff}}$ be the achieved HBM
+bandwidth during cuBLAS \texttt{Sgemv}. The wall-clock cost of the
+episode-scoped path is
 \[
-|\textnormal{ep}| \cdot D \;<\; \alpha \cdot N \cdot D \;-\; \beta_{\textnormal{topK}}(N) \;-\; \beta_{\textnormal{BFS}},
+T_{\textnormal{ep}}(|\textnormal{ep}|) \;\approx\;
+\frac{4 \cdot |\textnormal{ep}| \cdot D}{B_{\textnormal{eff}}}
+\;+\; T_{\textnormal{topK}}(|\textnormal{ep}|) \;+\; T_{\textnormal{BFS,0}},
 \]
-where $\alpha$ is the achieved fraction of HBM bandwidth on the cosine
-sweep (\textit{i.e.}\ similarity stage cost in seconds is
-$\alpha N D / B$ for HBM bandwidth $B$),
-$\beta_{\textnormal{topK}}(N) = \Theta(N)$ is the radix-sort cost, and
-$\beta_{\textnormal{BFS}}$ is the constant BFS overhead.
-The episode-scoped path also \emph{eliminates by construction} all
+with $T_{\textnormal{BFS,0}}$ the zero-hop BFS bookkeeping cost
+($\sim$5\,$\mu$s of launch overhead, no neighbour expansion). The
+global path costs
+\[
+T_{\textnormal{glo}}(N) \;\approx\;
+\frac{4 \cdot N \cdot D}{B_{\textnormal{eff}}}
+\;+\; T_{\textnormal{topK}}(N) \;+\; T_{\textnormal{BFS}}(K, h, \bar{d}).
+\]
+$T_{\textnormal{ep}} < T_{\textnormal{glo}}$ for any
+$|\textnormal{ep}| \ll N$ once the bandwidth term dominates; on the
+A100~SXM4 with $4D{=}3072$\,B, $|\textnormal{ep}|{=}10$, and
+$B_{\textnormal{eff}}\!\approx\!1.2$\,TB/s, the inequality holds for
+all $N \gtrsim 10^3$. Beyond the latency comparison, the
+episode-scoped path \emph{eliminates by construction} all
 $N - |\textnormal{ep}|$ cross-episode distractors, which is the
 recall-at-scale advantage demonstrated empirically in
 Section~\ref{sec:competitor_bench}.
 \end{proposition}
 
 \noindent\textit{Practical reading.} On the embodied kids-ball
-benchmark with $|\textnormal{ep}|{=}10$ and $D{=}768$, the right-hand
-side becomes positive for any $N \gtrsim 10^3$, which is consistent
-with the measured ${\sim}13\times$ speedup at $N{=}10^6$
+benchmark with $|\textnormal{ep}|{=}10$ and $D{=}768$, the inequality
+holds across the entire tested range, which is consistent with the
+measured ${\sim}13\times$ speedup at $N{=}10^6$
 (Table~\ref{tab:competitor_bench}). The real win is the second
 sentence: episode-scope eliminates the recall collapse that pure
 cosine ANN suffers when the per-episode multimodal cluster is small
@@ -963,12 +992,14 @@ configurations to make this explicit.
 \centering
 \small
 \caption{Streaming-insertion freshness with three FAISS
-configurations and \mars{}. ``Miss'' = fraction of queries whose
-target was inserted after the last visibility refresh.}
+configurations and \mars{}. ``Visibility miss'' = fraction of queries
+whose target was inserted after the last index visibility refresh
+(distinct from the deadline-miss rate reported for the demonstrators
+in Table~\ref{tab:wall_clock}).}
 \label{tab:streaming}
 \begin{tabular}{llrr}
 \toprule
-\textbf{System} & \textbf{Insert mode} & \textbf{Miss rate} & \textbf{Stall (ms)} \\
+\textbf{System} & \textbf{Insert mode} & \textbf{Visibility miss} & \textbf{Stall (ms)} \\
 \midrule
 FAISS-Flat-GPU       & \texttt{add()} per frame, no rebuild & 0.0\%  & 0     \\
 FAISS-Flat-GPU       & 1\,s rebuild cadence (production strawman) & 93.2\% & 9     \\
@@ -1041,8 +1072,12 @@ specific row by abbreviation.
 \caption{Hardware index for all measurements in
 Section~\ref{sec:results}. \texttt{HBM} bandwidths are vendor-spec
 peak; the achieved fraction during cuBLAS \texttt{Sgemv} is
-60--75\,\% on all three. CUDA versions and driver branches are the
-ones used at measurement time on the rented or local machine.}
+spot-checked at 60--75\,\% on the A100~SXM4~80\,GB row at
+$N{=}10^6$ via Nsight Systems --- a full per-stage Nsight Compute
+breakdown across all rows is queued as part of the evaluation
+hardening track (\S\ref{sec:future-work}). CUDA versions and driver
+branches are the ones used at measurement time on the rented or
+local machine.}
 \label{tab:hwindex}
 \begin{tabular}{@{}llcrll@{}}
 \toprule
@@ -1234,12 +1269,16 @@ behavior suitable for integration into deterministic real-time pipelines.
 \label{fig:deadline}
 \end{figure}
 
-\subsection{Sustained Long-Duration Benchmarks}
+\subsection{Sustained 30-Second Benchmarks}
+\label{sec:sustained}
 
 Short-run benchmarks (10--50~seconds) may not capture effects that
-emerge at production-scale durations: GPU boost-clock throttling,
-memory allocator fragmentation, OS scheduler interference. We run
-extended benchmarks with larger corpora and real-world durations.
+emerge at longer durations: GPU boost-clock throttling, memory
+allocator fragmentation, OS scheduler interference. We extend the
+benchmarks to 15--30~seconds with larger corpora; longer (multi-minute
+to multi-hour) sustained runs that would catch slow-onset thermal
+drift are queued as part of the evaluation hardening track
+(\S\ref{sec:future-work}).
 
 \begin{table}[ht]
 \centering
@@ -1781,8 +1820,8 @@ $N$ (Figure~\ref{fig:fp16_crossover}).}
 Three findings emerge (also visible in
 Figure~\ref{fig:competitors}).
 
-\textbf{(1) \mars{} Episode-scoped is Pareto-dominant on the embodied
-contract at every $N$.} It is $34\times$ faster than the only baseline
+\textbf{(1) \mars{} Episode-scoped is Pareto-optimal on the embodied
+contract at every $N$.} It is $33\times$ faster than the only baseline
 that also achieves \texttt{hit@15}=1.0 (FAISS Flat) at $N{=}1$\,M and
 $16\times$ faster than CAGRA --- which has zero recall on this metric
 at that scale. This is the empirical centrepiece of the paper:

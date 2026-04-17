@@ -71,6 +71,19 @@ For real-time workloads, keep the working set in VRAM (up to 13M on A100 40GB).
 | cuVS CAGRA | 2.29 ms | 2.47 ms | — | No | No |
 | **MARS** | **0.44 ms** | **0.56 ms** | **2.67 ms** | **Yes** | **Yes** |
 
+**Episode-scoped retrieval** (when `query_episode_id` is known —
+embodied loops, AV per-track memory, voice-agent conversation): MARS
+restricts Stage 1 to episode members and skips BFS, producing a
+near-flat scaling curve at sub-200 µs across all corpus sizes (paired
+A100 probes, see `results/iteration_steps/vast_a100_paired_20260417/`):
+
+| N | Global p99 | **Episode-scoped p99** | Speedup | Episode hit@15 |
+|---|-----------:|-----------------------:|:-------:|---------------:|
+| 10K  | 0.349 ms | **0.165 ms** | 2.1× | 0.83 → **1.00** |
+| 50K  | 0.462 ms | **0.172 ms** | 2.7× | 0.88 → **1.00** |
+| 100K | 0.551 ms | **0.174 ms** | 3.2× | 0.79 → **1.00** |
+| 1M   | 2.561 ms | **0.197 ms** | **13×** | 0.84 → **1.00** |
+
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results across
 GPUs, scaling sweeps to 13M memories, and the FAISS/CAGRA comparison.
 

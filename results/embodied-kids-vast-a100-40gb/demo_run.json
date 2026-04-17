@@ -1,0 +1,22 @@
+{
+  "demo": "embodied_scene",
+  "scenario": "Kids + ball: IMAGE probes; same-episode TEXT+AUDIO in compacted rank window",
+  "frame_rate_hz": 15,
+  "deadline_p99_ms": 20.000,
+  "num_frames": 450,
+  "corpus_size": 3600,
+  "embedding_dim": 768,
+  "latency_ms": {
+    "p50":  0.0963,
+    "p90":  0.0973,
+    "p99":  0.0983,
+    "max":  60.0863,
+    "mean": 0.2297
+  },
+  "metrics": {
+    "episode_cross_modal_hit_rate_compact": 0.9800,
+    "episode_cross_modal_hit_rate_top15": 0.8356,
+    "total_queries": 450.0000
+  },
+  "deadline_met": true
+}

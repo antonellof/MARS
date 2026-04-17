@@ -1,0 +1,52 @@
+{
+  "tool": "mars-kids-ball-sweep",
+  "version": "1.1",
+  "note": "MARS full pipeline (temporal + cuBLAS/CUB + BFS). episode_cross_modal_hit_rate_compact scans up to max_results_returned sorted compact results (graph-aligned). top15 is the strict first-15 slice. FAISS: scripts/bench_kids_ball_faiss.py --search-k should match for fair episode comparison.",
+  "embedding_dim": 768,
+  "top_k": 15,
+  "max_results_returned": 96,
+  "num_probes_per_n": 256,
+  "corpus_seed": 2026,
+  "configurations": [
+    {
+      "N": 1000,
+      "build_ms": 17.882,
+      "wall_p99_ms": 0.1765,
+      "kernel_p99_ms": 0.0922,
+      "episode_cross_modal_hit_rate_compact": 0.9922,
+      "episode_cross_modal_hit_rate_top15": 0.8008
+    },
+    {
+      "N": 5000,
+      "build_ms": 88.108,
+      "wall_p99_ms": 0.2757,
+      "kernel_p99_ms": 0.1649,
+      "episode_cross_modal_hit_rate_compact": 0.9922,
+      "episode_cross_modal_hit_rate_top15": 0.8086
+    },
+    {
+      "N": 10000,
+      "build_ms": 176.097,
+      "wall_p99_ms": 0.2973,
+      "kernel_p99_ms": 0.1843,
+      "episode_cross_modal_hit_rate_compact": 0.9844,
+      "episode_cross_modal_hit_rate_top15": 0.8164
+    },
+    {
+      "N": 20000,
+      "build_ms": 347.539,
+      "wall_p99_ms": 0.3302,
+      "kernel_p99_ms": 0.2191,
+      "episode_cross_modal_hit_rate_compact": 0.9844,
+      "episode_cross_modal_hit_rate_top15": 0.8359
+    },
+    {
+      "N": 50000,
+      "build_ms": 1031.396,
+      "wall_p99_ms": 0.4012,
+      "kernel_p99_ms": 0.2939,
+      "episode_cross_modal_hit_rate_compact": 0.9883,
+      "episode_cross_modal_hit_rate_top15": 0.8516
+    }
+  ]
+}

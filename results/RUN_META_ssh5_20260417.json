@@ -1,0 +1,36 @@
+{
+  "host": "ssh5.vast.ai",
+  "ssh_port": 19293,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "driver": "565.57.01",
+  "cuda_runtime": "12.6",
+  "os": "Ubuntu 24.04.4 LTS",
+  "git_commit": "3b04e1ca851466429d4840152a548bb04b6a51eb",
+  "branch": "feature/embodied-kids-ball-benchmark",
+  "tests_passed": "19/19",
+  "bench_av": {
+    "wall_p99_ms": 0.3992,
+    "wall_p99_9_ms": 0.4360,
+    "kernel_p99_ms": 0.1710,
+    "deadline_budget_ms": 1.0,
+    "deadline_misses": 0
+  },
+  "kids_mars_sweep": {
+    "n_list": [1000, 5000, 10000, 20000, 50000],
+    "wall_p99_ms": {
+      "global_baseline":          [0.180, 0.271, 0.256, 0.297, 0.347],
+      "global_episode_boost_0.24":[0.181, 0.271, 0.264, 0.300, 0.365],
+      "episode_scoped_no_bfs":    [0.118, 0.183, 0.161, 0.163, 0.163]
+    },
+    "ep_hit_top15": {
+      "episode_scoped_no_bfs": [1.0, 1.0, 1.0, 1.0, 1.0]
+    },
+    "json": "results/kids_ball_mars_sweep_ssh5_20260417.json"
+  },
+  "iteration_runs": [
+    "results/iteration_steps/vast_a100_ssh5_20260417_10k/SUMMARY.json",
+    "results/iteration_steps/vast_a100_ssh5_20260417_1m/SUMMARY.json"
+  ],
+  "validate_results": "results/results_ssh5_20260417.json",
+  "note": "Reconfirmation of episode_same_boost=0.24 (N=10k optimum) and 0.245 (N=1M, lower-probe regime). No regressions vs prior A100 runs."
+}

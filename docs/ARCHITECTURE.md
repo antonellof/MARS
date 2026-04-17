@@ -37,6 +37,8 @@ For N = 1 million memories with D = 768 and average degree 12:
 
 This fits comfortably in a 40 GB A100 with room for ~12M memories total.
 
+**Embodied / layout extensions (design notes):** [MEMORY_LAYOUT_EMBODIED.md](MEMORY_LAYOUT_EMBODIED.md) (SoA, FP16/BF16, kids-scale VRAM), [TEMPORAL_HIERARCHY.md](TEMPORAL_HIERARCHY.md) (hot tier + warm NSN), [MULTIMODAL_ROUTING.md](MULTIMODAL_ROUTING.md) (modality-aware seeds), [FAIR_BASELINES.md](FAIR_BASELINES.md) (comparison contracts), [ANN_REFINE_FUTURE.md](ANN_REFINE_FUTURE.md) (ANN + refine sketch). **Episode metadata on GPU:** `upload_episode_ids` / `upload_episode_csr` plus `RetrievalScope::EpisodeScoped` in [memory_cuda.cuh](../include/memory_cuda.cuh).
+
 ## 2. The Neural Shortcut Network
 
 The graph topology is constructed in five phases. The first four build a
@@ -363,3 +365,26 @@ by 48x, bringing 100M queries under 1 second.
 | 13M | In-VRAM | 29.1 ms | 28.7 ms | VRAM limit |
 | 10M | Tiled | 2,517 ms | 37.6 ms | PCIe-bound |
 | 50M | Tiled | 14,017 ms | 203 ms | PCIe-bound |
+
+### 7.1 Episode-scoped retrieval (`RetrievalScope::EpisodeScoped`)
+
+When the application can supply `query_episode_id` (embodied loops,
+per-track memory, conversation/session id), Stage 1 is restricted to
+the episode's CSR member range and BFS is skipped (depth = 0). This
+collapses Θ(N·D) to Θ(|episode|·D) and removes the cross-episode
+distractors that limit recall on the kids-ball metric. Paired-probes
+A100 sweep (commit `37f4899`,
+[`results/iteration_steps/vast_a100_paired_20260417/`](../results/iteration_steps/vast_a100_paired_20260417/)):
+
+| N | Global p99 | Episode-scoped p99 | Speedup | Hit@15 (global → scoped) |
+|---|-----------:|-------------------:|:-------:|------------------------:|
+| 10K  | 0.349 ms | **0.165 ms** | 2.1×    | 0.83 → 1.00 |
+| 50K  | 0.462 ms | **0.172 ms** | 2.7×    | 0.88 → 1.00 |
+| 100K | 0.551 ms | **0.174 ms** | 3.2×    | 0.79 → 1.00 |
+| 1M   | 2.561 ms | **0.197 ms** | **13×** | 0.84 → 1.00 |
+
+Caveat: episode-scoped is only correct when the right episode is
+known *before* the query — it does not solve cross-episode retrieval
+(which is exactly what BFS bridges + temporal decay over the global
+corpus exist for). The two paths are complementary; the embodied demo
+exposes both via `--scope=episode` / `--scope=global`.

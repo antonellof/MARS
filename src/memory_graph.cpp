@@ -9,6 +9,40 @@
 #include <random>
 #include <unordered_set>
 
+HostEpisodeCSR build_episode_csr(const std::vector<int32_t>& episode_ids,
+                                 int32_t num_nodes) {
+    HostEpisodeCSR out;
+    if (num_nodes <= 0 || int32_t(episode_ids.size()) != num_nodes)
+        return out;
+
+    int32_t max_ep = 0;
+    for (int32_t i = 0; i < num_nodes; ++i)
+        max_ep = std::max(max_ep, episode_ids[i]);
+    out.num_episodes = max_ep + 1;
+
+    std::vector<int32_t> cnt(static_cast<size_t>(out.num_episodes), 0);
+    for (int32_t i = 0; i < num_nodes; ++i)
+        ++cnt[static_cast<size_t>(episode_ids[i])];
+
+    out.ep_csr_offsets.resize(static_cast<size_t>(out.num_episodes) + 1u);
+    out.ep_csr_offsets[0] = 0;
+    for (int32_t e = 0; e < out.num_episodes; ++e)
+        out.ep_csr_offsets[static_cast<size_t>(e) + 1u] =
+            out.ep_csr_offsets[static_cast<size_t>(e)] + cnt[static_cast<size_t>(e)];
+
+    out.ep_csr_members.resize(static_cast<size_t>(out.ep_csr_offsets.back()));
+    std::vector<int32_t> cursor(out.ep_csr_offsets.begin(),
+                                out.ep_csr_offsets.begin() + out.num_episodes);
+    for (int32_t i = 0; i < num_nodes; ++i) {
+        int32_t ep = episode_ids[i];
+        size_t  ei = static_cast<size_t>(ep);
+        int32_t pos = cursor[ei];
+        cursor[ei]   = pos + 1;
+        out.ep_csr_members[static_cast<size_t>(pos)] = i;
+    }
+    return out;
+}
+
 MemoryGraph MemoryGraph::synthetic(int32_t n_text,
                                    int32_t n_audio,
                                    int32_t n_image,
@@ -171,4 +205,91 @@ size_t MemoryGraph::device_bytes() const {
          + embeddings.size()  * sizeof(float)
          + modalities.size()  * sizeof(int32_t)
          + timestamps.size()  * sizeof(float);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Embodied scene: kids playing with ball (multimodal, repeating episodes)
+//
+//  Design lock — one episode = KIDS_EP_LEN memories, monotonic timestamps.
+//  Template slots (logical → Modality):
+//    0 wide RGB      IMAGE   1 IMU window    AUDIO   2 bounce mic    AUDIO
+//    3 ASR fragment  TEXT    4 ball flight   IMAGE   5 FSM state     TEXT
+//    6 catch sound   AUDIO   7 “Got it!”     TEXT    8 follow RGB    IMAGE
+//    9 crowd mic     AUDIO
+//  Embeddings: per-episode L2-normalized prototype + 0.42 * slot direction
+//  + small Gaussian noise, then row L2-normalize.
+// ═══════════════════════════════════════════════════════════════════════
+
+namespace {
+
+constexpr int32_t KIDS_EP_LEN = 10;
+
+const Modality KIDS_TEMPLATE[KIDS_EP_LEN] = {
+    MOD_IMAGE, MOD_AUDIO, MOD_AUDIO, MOD_TEXT, MOD_IMAGE,
+    MOD_TEXT, MOD_AUDIO, MOD_TEXT, MOD_IMAGE, MOD_AUDIO
+};
+
+void l2_normalize_row(float* row, int32_t dim) {
+    float norm = 0.0f;
+    for (int32_t d = 0; d < dim; ++d) norm += row[d] * row[d];
+    norm = std::sqrt(norm) + 1e-8f;
+    for (int32_t d = 0; d < dim; ++d) row[d] /= norm;
+}
+
+} // namespace
+
+EmbodiedKidsBallCorpus EmbodiedKidsBallCorpus::make(int32_t n_nodes, int32_t dim,
+                                                    uint32_t seed) {
+    EmbodiedKidsBallCorpus out;
+    if (n_nodes < 1 || dim < 2)
+        return out;
+
+    MemoryGraph& g = out.graph;
+    g.num_nodes     = n_nodes;
+    g.embedding_dim = dim;
+    g.embeddings.assign(static_cast<size_t>(n_nodes) * dim, 0.0f);
+    g.modalities.resize(n_nodes);
+    g.timestamps.resize(n_nodes);
+    out.episode_ids.assign(n_nodes, 0);
+
+    std::mt19937 rng(seed);
+    std::normal_distribution<float> N01(0.0f, 1.0f);
+
+    // Unit-norm direction per template slot (reproducible from seed).
+    std::vector<std::vector<float>> slot_dir(KIDS_EP_LEN, std::vector<float>(dim));
+    for (int32_t s = 0; s < KIDS_EP_LEN; ++s) {
+        std::mt19937 roff(seed + 0x9E3779B9u * (uint32_t(s) + 1u));
+        std::normal_distribution<float> Ns(0.0f, 1.0f);
+        for (int32_t d = 0; d < dim; ++d)
+            slot_dir[s][d] = Ns(roff);
+        l2_normalize_row(slot_dir[s].data(), dim);
+    }
+
+    std::vector<float> proto(dim);
+    bool have_proto = false;
+    int32_t prev_ep  = -1;
+
+    for (int32_t i = 0; i < n_nodes; ++i) {
+        const int32_t ep   = i / KIDS_EP_LEN;
+        const int32_t slot = i % KIDS_EP_LEN;
+
+        out.episode_ids[i] = ep;
+        g.modalities[i]    = KIDS_TEMPLATE[slot];
+        g.timestamps[i]    = float(i) * 0.05f;
+
+        if (!have_proto || ep != prev_ep) {
+            prev_ep = ep;
+            have_proto = true;
+            for (int32_t d = 0; d < dim; ++d)
+                proto[d] = N01(rng);
+            l2_normalize_row(proto.data(), dim);
+        }
+
+        float* row = &g.embeddings[static_cast<size_t>(i) * dim];
+        for (int32_t d = 0; d < dim; ++d)
+            row[d] = proto[d] + 0.50f * slot_dir[slot][d] + N01(rng) * 0.05f;
+        l2_normalize_row(row, dim);
+    }
+
+    return out;
 }

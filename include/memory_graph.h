@@ -64,4 +64,32 @@ struct MemoryGraph {
     size_t device_bytes() const;
 };
 
+// ─── Episode grouping (host CSR over node ids) ──────────────────────
+// Built from per-node episode_ids[i]. Used for optional episode-scoped GPU
+// retrieval (see RetrievalScope in memory_cuda.cuh).
+struct HostEpisodeCSR {
+    int32_t               num_episodes = 0;
+    std::vector<int32_t>  ep_csr_offsets;  // length num_episodes + 1
+    std::vector<int32_t>  ep_csr_members;  // concatenated node indices per episode
+};
+
+HostEpisodeCSR build_episode_csr(const std::vector<int32_t>& episode_ids,
+                                 int32_t num_nodes);
+
+// Global: full-graph similarity + BFS. EpisodeScoped: similarity + decay only
+// over nodes in query_episode_id (O(M·D), M = episode size); BFS hops forced 0.
+enum class RetrievalScope : int32_t { Global = 0, EpisodeScoped = 1 };
+
+// ─── Embodied “kids playing with ball” multimodal corpus ─────────────
+// Fixed episode template (10 nodes): repeating cycle scales to arbitrary N.
+// Modalities follow the embodied mapping (RGB→IMAGE, mic/IMU→AUDIO, ASR/state→TEXT).
+// episode_ids[i] is the episode index for node i (same episode shares one latent prototype).
+struct EmbodiedKidsBallCorpus {
+    MemoryGraph           graph;
+    std::vector<int32_t>  episode_ids;  // size == graph.num_nodes after make
+
+    // n_nodes >= 10 recommended so at least one full episode exists.
+    static EmbodiedKidsBallCorpus make(int32_t n_nodes, int32_t dim, uint32_t seed = 42);
+};
+
 #endif // MEMORY_GRAPH_H

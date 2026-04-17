@@ -1,0 +1,14 @@
+{
+  "step": "global_episode_boost",
+  "episode_same_boost": 0.240000,
+  "N": 10000,
+  "num_probes": 256,
+  "build_ms": 194.875,
+  "wall_p99_ms": 0.2998,
+  "kernel_p99_ms": 0.1853,
+  "episode_cross_modal_hit_rate_compact": 1.000000,
+  "episode_cross_modal_hit_rate_top15": 0.867188,
+  "composite_score": 2.734375,
+  "ranking_score": 2.734375,
+  "iterate_wall_ms_penalty": 0.000000
+}

@@ -21,6 +21,10 @@
 #    make demo-robot     ./demos/robot_episodic/demo   (1 kHz,  1 ms target)
 #    make demo-ar        ./demos/ar_spatial/demo       (90 Hz,  5 ms target)
 #    make demo-voice     ./demos/voice_agent/demo      (30 Hz, 20 ms target)
+#    make demo-embodied  ./demos/embodied_scene/demo  (kids-ball multimodal)
+#    make bench-kids-mars       GPU N-sweep JSON (requires nvcc + GPU)
+#    make bench-kids-export     Write results/kids_corpus_10k.bin (no GPU)
+#    make bench-kids-baselines  FAISS on corpus bin (faiss-gpu + numpy)
 #
 #  Latency benchmark presets (match the four application demonstrators):
 #    make bench-av       ./latency_bench   60 1.0   600   2400
@@ -69,19 +73,21 @@ PERSIST_OBJS   := src/persistence.o
 SERVER_OBJS    := $(COMMON_OBJS) $(PERSIST_OBJS) $(WMMA_OBJS) src/engine_server.o
 TILED_OBJS     := src/tiled_query.o src/memory_graph.o
 
-DEMO_NAMES  := av_perception robot_episodic ar_spatial voice_agent
+DEMO_NAMES  := av_perception robot_episodic ar_spatial voice_agent embodied_scene
 DEMO_BINS   := $(foreach d,$(DEMO_NAMES),demos/$(d)/demo)
+KIDS_SWEEP  := demos/embodied_scene/bench_kids_sweep
 
 # ─── Primary targets ─────────────────────────────────────────────────
 .PHONY: all engine validate latency server demos tests run check clean info paper
-.PHONY: demo-av demo-robot demo-ar demo-voice
+.PHONY: demo-av demo-robot demo-ar demo-voice demo-embodied
+.PHONY: bench-kids-mars bench-kids-export bench-kids-baselines bench-kids-sweep-bin
 .PHONY: bench-av bench-robot bench-ar bench-voice
 .PHONY: bench-sustained bench-av-30s bench-robot-15s bench-ar-30s bench-voice-30s
 .PHONY: bench-scale bench-large bench-fp16 bench-cmng bench-mars bench-ablation bench-ablation-quick
 .PHONY: bench-av-keepalive bench-av-30s-keepalive
 .PHONY: bench-graph bench-wmma bench-tiled
 
-all: engine validate latency server demos
+all: engine validate latency server demos $(KIDS_SWEEP)
 
 engine:   memory_engine
 validate: validate
@@ -108,6 +114,101 @@ bench_tiled: $(TILED_OBJS) src/bench_tiled.o
 # Each demo builds from its demo.cu + common objects + frame_timer.h
 demos/%/demo: demos/%/demo.cu $(COMMON_OBJS) demos/common/frame_timer.h include/memory_cuda.cuh include/memory_graph.h
 	$(NVCC) $(NVCCFLAGS) $(DEMO_INC) -lcublas -o $@ $< $(COMMON_OBJS)
+
+# Kids-ball embodied scene: GPU sweep benchmark (separate entry point)
+$(KIDS_SWEEP): demos/embodied_scene/bench_kids_sweep.cu $(COMMON_OBJS) include/memory_cuda.cuh include/memory_graph.h
+	$(NVCC) $(NVCCFLAGS) $(DEMO_INC) -lcublas -o $@ $< $(COMMON_OBJS)
+
+bench-kids-sweep-bin: $(KIDS_SWEEP)
+
+bench-kids-mars: $(KIDS_SWEEP)
+	@mkdir -p results
+	$(KIDS_SWEEP) results/kids_ball_mars_sweep.json
+
+# Coarse grid over episode_same_boost at fixed N; writes step_*.json + SUMMARY under dir
+bench-kids-iterate: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_default
+	$(KIDS_SWEEP) --boost-grid 0,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.5 \
+		--iterate-n 10000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_default
+
+# Second-stage refine around prior optimum (~0.25) at N=10k
+bench-kids-iterate-refine: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine
+	$(KIDS_SWEEP) --boost-grid 0.20,0.22,0.24,0.26,0.28,0.30 \
+		--iterate-n 10000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine
+
+# Same refine grid but pick best by (composite - penalty * wall_p99_ms)
+bench-kids-iterate-refine-latency: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_latency
+	$(KIDS_SWEEP) --boost-grid 0.20,0.22,0.24,0.26,0.28,0.30 \
+		--iterate-n 10000 --iterate-probes 256 --iterate-wall-ms-penalty 1.0 \
+		--iterate-steps-dir results/iteration_steps/make_refine_latency
+
+# Third pass: include 0.25 between 0.24 and 0.26 (saved hardware: vast_a100_refine3/)
+bench-kids-iterate-refine-micro: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 10000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro
+
+# Same micro-grid at larger N (matches multi-N sweep corpus sizes; run on GPU)
+bench-kids-iterate-refine-micro-20k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_20k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 20000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_20k
+
+bench-kids-iterate-refine-micro-50k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_50k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 50000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_50k
+
+# 100k / 250k / 500k: same micro-grid as 10k–50k (one NSN build per make invocation).
+bench-kids-iterate-refine-micro-100k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_100k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 100000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_100k
+
+bench-kids-iterate-refine-micro-250k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_250k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 250000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_250k
+
+bench-kids-iterate-refine-micro-500k: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_500k
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 500000 --iterate-probes 256 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_500k
+
+# 1M nodes (~3 GiB FP32 embeddings + NSN + query ctx): needs a high-VRAM GPU (e.g. A100 40GB+).
+# 128 probes/boost to keep wall time tractable; raise with --iterate-probes if you need tighter stats.
+bench-kids-iterate-refine-micro-1m: $(KIDS_SWEEP)
+	@mkdir -p results/iteration_steps/make_refine_micro_1m
+	$(KIDS_SWEEP) --boost-grid 0.23,0.24,0.245,0.25,0.255,0.26 \
+		--iterate-n 1000000 --iterate-probes 128 \
+		--iterate-steps-dir results/iteration_steps/make_refine_micro_1m
+
+# Fill ~40 GiB VRAM (default): N from scripts/kids_ball_max_n_vram.py (≈13.2M nodes @ 768-D).
+# Requires comparable host DRAM (~38+ GiB embeddings during corpus build). Override: VRAM_GIB=80 make ...
+VRAM_GIB ?= 40
+bench-kids-vram-max-smoke: $(KIDS_SWEEP)
+	@N=$$(python3 scripts/kids_ball_max_n_vram.py --vram-gib $(VRAM_GIB) --reserve-mib 768 --print-n); \
+	mkdir -p results/iteration_steps/make_vram_max_smoke; \
+	echo "bench-kids-vram-max-smoke: VRAM_GIB=$(VRAM_GIB) N=$$N (see scripts/kids_ball_max_n_vram.py)"; \
+	$(KIDS_SWEEP) --boost-grid 0.24 --iterate-n $$N --iterate-probes 4 \
+		--iterate-steps-dir results/iteration_steps/make_vram_max_smoke
+
+bench-kids-export: $(KIDS_SWEEP)
+	@mkdir -p results
+	$(KIDS_SWEEP) --dump-only results/kids_corpus_10k.bin 10000 768
+
+bench-kids-baselines:
+	@python3 scripts/bench_kids_ball_faiss.py --corpus results/kids_corpus_10k.bin | tee results/kids_ball_faiss.json
 
 # ─── Object file rules ───────────────────────────────────────────────
 src/persistence.o: src/persistence.cpp include/persistence.h include/memory_graph.h
@@ -167,6 +268,9 @@ demo-ar:    demos/ar_spatial/demo
 
 demo-voice: demos/voice_agent/demo
 	./demos/voice_agent/demo
+
+demo-embodied: demos/embodied_scene/demo
+	./demos/embodied_scene/demo
 
 # Latency benchmark presets (rate, budget_ms, frames, corpus)
 bench-av:    latency_bench
@@ -440,6 +544,5 @@ bench-tiled: bench_tiled
 clean:
 	rm -f src/*.o
 	rm -f memory_engine validate latency_bench engine_server bench_tiled
-	rm -f $(DEMO_BINS)
+	rm -f $(DEMO_BINS) $(KIDS_SWEEP)
 	rm -f tests/run_tests
-	rm -rf results/

@@ -1,0 +1,13 @@
+{
+  "host": "ssh4.vast.ai",
+  "ssh_port": 13539,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "iterate_n": 10000,
+  "iterate_probes": 256,
+  "boost_grid": "0.23,0.24,0.245,0.25,0.255,0.26",
+  "iterate_wall_ms_penalty": 0.0,
+  "git_commit": "97078c193c76680dba02cd714b197b67d8f0bb3f",
+  "steps_dir": "results/iteration_steps/vast_a100_refine3",
+  "best_global_episode_same_boost": 0.24,
+  "note": "Pins optimum vs 0.25: composite 2.7344 @0.24 vs 2.6719 @0.25 (same N/probes/seed as other iteration runs)."
+}

@@ -1,0 +1,22 @@
+{
+  "host": "ssh4.vast.ai",
+  "ssh_port": 13539,
+  "container_hostname": "6f2d3392a66a",
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "vram_mib": 40960,
+  "driver": "550.107.02",
+  "cuda_runtime_reported": "12.4",
+  "git_commit": "c2e49fea09e4644a75b6a1c65ea81e872e65c3ee",
+  "branch": "feature/embodied-kids-ball-benchmark",
+  "artifacts": {
+    "mars_sweep_v12": "results/embodied-kids-vast-ssh4-20260414-mars_sweep_v12.json",
+    "mars_sweep_v12_post_opt": "results/embodied-kids-vast-ssh4-20260414-mars_sweep_v12_post_opt.json"
+  },
+  "commands": [
+    "make tests",
+    "make clean && make",
+    "./demos/embodied_scene/bench_kids_sweep results/embodied-kids-vast-ssh4-20260414/mars_sweep_v12.json",
+    "./validate 10000 768 (head only)"
+  ],
+  "notes": "bench_kids_sweep v1.2: three variants per N (global_baseline, global_episode_boost_0.35, episode_scoped_no_bfs). Vast run used per-variant QueryContext (commit c2e49fe). Later commits: shared QueryContext per N; make clean no longer deletes results/."
+}

@@ -1,0 +1,25 @@
+{
+  "tool": "mars-kids-boost-iterate",
+  "version": "1.3",
+  "iterate_n": 50000,
+  "iterate_probes": 256,
+  "corpus_seed": 2026,
+  "criterion": "maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)",
+  "iterate_wall_ms_penalty": 0.000000,
+  "best_global_episode_same_boost": 0.000000,
+  "best_global_composite_score": 2.757812,
+  "best_global_ranking_score": 2.757812,
+  "best_global_step_file": "results/iteration_steps/paired_wide_50k/step_global_boost_0.json",
+  "episode_scoped_composite_score": 3.000000,
+  "episode_scoped_wall_p99_ms": 0.1723,
+  "episode_scoped_step_file": "results/iteration_steps/paired_wide_50k/step_episode_scoped.json",
+  "steps": [
+    {"boost":0.000000,"file":"results/iteration_steps/paired_wide_50k/step_global_boost_0.json","composite_score":2.757812,"ranking_score":2.757812,"wall_p99_ms":0.4617,"hit_top15":0.882812,"hit_compact":0.992188},
+    {"boost":0.100000,"file":"results/iteration_steps/paired_wide_50k/step_global_boost_100.json","composite_score":2.757812,"ranking_score":2.757812,"wall_p99_ms":0.4369,"hit_top15":0.882812,"hit_compact":0.992188},
+    {"boost":0.200000,"file":"results/iteration_steps/paired_wide_50k/step_global_boost_200.json","composite_score":2.757812,"ranking_score":2.757812,"wall_p99_ms":0.4305,"hit_top15":0.882812,"hit_compact":0.992188},
+    {"boost":0.300000,"file":"results/iteration_steps/paired_wide_50k/step_global_boost_300.json","composite_score":2.757812,"ranking_score":2.757812,"wall_p99_ms":0.4026,"hit_top15":0.882812,"hit_compact":0.992188},
+    {"boost":0.500000,"file":"results/iteration_steps/paired_wide_50k/step_global_boost_500.json","composite_score":2.750000,"ranking_score":2.750000,"wall_p99_ms":0.3900,"hit_top15":0.878906,"hit_compact":0.992188},
+    {"boost":1.000000,"file":"results/iteration_steps/paired_wide_50k/step_global_boost_1000.json","composite_score":2.750000,"ranking_score":2.750000,"wall_p99_ms":0.3876,"hit_top15":0.878906,"hit_compact":0.992188},
+    {"boost":-1.000000,"file":"results/iteration_steps/paired_wide_50k/step_episode_scoped.json","composite_score":3.000000,"ranking_score":3.000000,"wall_p99_ms":0.1723,"hit_top15":1.000000,"hit_compact":1.000000}
+  ]
+}

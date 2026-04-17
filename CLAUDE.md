@@ -128,22 +128,34 @@ cuda-multimodal-memory/
 │
 ├── scripts/
 │   ├── bench_cpu.py              ← NumPy reference pipeline (for projections)
-│   └── make_diagrams.py          ← regenerates the 4 architecture diagrams
+│   ├── make_diagrams.py          ← regenerates the 11 architecture diagrams
+│   ├── generate_paper_figures.py ← scaling / deadline / VRAM bar charts
+│   └── generate_competitor_figures.py
+│       └── reads results/competitors_20260417/*.json, emits paper-quality
+│         fig_competitors.{pdf,png}, fig_episode_scoped_scaling.{pdf,png},
+│         fig_fp16_crossover.{pdf,png} into paper/figures/
 │
 ├── docs/
-│   ├── ARCHITECTURE.md           ← deep dive on the 4 kernels
+│   ├── ARCHITECTURE.md           ← deep dive on the 4 kernels (incl. §7.2-7.4)
 │   ├── HARDWARE_VALIDATION.md    ← ⚠ TRUNCATED — needs completion
-│   ├── thesis.docx               ← original thesis (to be replaced by paper/main.tex)
-│   ├── diag_pipeline.png         ← Figure 1
-│   ├── diag_graph.png            ← Figure 2
-│   ├── diag_kernels.png          ← Figure 3
-│   └── diag_benchmark.png        ← Figure 4
+│   ├── thesis.docx               ← original thesis (replaced by paper/main.tex)
+│   ├── diag_pipeline.png         ← Pipeline incl. episode-scoped fast path
+│   ├── diag_graph.png            ← Multimodal NSN graph w/ cross-modal bridges
+│   ├── diag_kernels.png          ← Per-kernel dataflow + warp organization
+│   ├── diag_benchmark.png        ← Per-stage measured timing
+│   └── diag_faiss_comparison.png ← Refreshed 2026-04-17 head-to-head
 │
 ├── paper/
-│   ├── main.tex                  ← arXiv-format LaTeX (17 pages, compiles to PDF)
+│   ├── main.tex                  ← arXiv-format LaTeX (compiles to PDF via tectonic)
 │   ├── main.pdf                  ← compiled paper
 │   ├── references.bib
-│   └── figures/                  ← copies of docs/*.png
+│   └── figures/                  ← all paper figures (PNG + PDF)
+│       ├── fig_competitors.{pdf,png}             ← head-to-head bar chart
+│       ├── fig_episode_scoped_scaling.{pdf,png}  ← near-flat scaling curve
+│       ├── fig_fp16_crossover.{pdf,png}          ← FP16 vs cuBLAS crossover
+│       ├── fig_scaling*.{pdf,png}, fig_deadline.{pdf,png}
+│       ├── tikz_pipeline.{pdf,png}, tikz_memory_model.{pdf,png}
+│       └── diag_pipeline.png, diag_graph.png  (synced from docs/)
 │
 │
 └── benchmark.json                ← raw CPU-reference numbers from scripts/bench_cpu.py

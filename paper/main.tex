@@ -1224,7 +1224,25 @@ $N{=}1$M the episode-scoped path delivers \textbf{197~$\mu$s} $p99$
 wall-clock --- below every per-frame deadline in
 Table~\ref{tab:wall_clock} including the 1~ms AV budget --- while
 returning a perfect-recall multimodal answer for the workloads where
-the episode id is available.
+the episode id is available. Figure~\ref{fig:episode_scoped_scaling}
+plots the four scaling curves on log--log axes; the episode-scoped
+line is visibly flat while every cosine-only baseline rises with
+$N$ and every approximate baseline (CAGRA, FAISS-IVF) loses recall.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_episode_scoped_scaling.png}
+\caption{Wall-clock $p99$ vs.\ corpus size $N$ on the kids-ball
+multimodal contract (A100 SXM4 40\,GB). Episode-scoped \mars{}
+(green diamond) is near-flat at ${\sim}200$~$\mu$s across three
+decades of $N$ while keeping perfect cross-modal recall. The only
+baseline that also achieves \texttt{hit@15}=1.0 (FAISS Flat,
+exhaustive) crosses the 1~ms AV deadline already at $N{=}10^5$ and
+is 33$\times$ slower than \mars-Episode at $N{=}10^6$. cuVS CAGRA's
+$p99$ stays under 4~ms but its multimodal-episode recall collapses
+to 0 at $N{\ge}10^5$ (Section~\ref{sec:competitor_bench}).}
+\label{fig:episode_scoped_scaling}
+\end{figure}
 
 \paragraph{When this applies, when it doesn't.} Episode scope is
 correct only when the right episode is known \emph{before} the
@@ -1312,7 +1330,24 @@ cuVS CAGRA (\texttt{graph\_degree}=64) & 3.319 & 1.000 & 3.233 & 0.008 & 3.251 &
 \end{tabular}
 \end{table*}
 
-Three findings emerge.
+\begin{figure*}[ht]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig_competitors.png}
+\caption{Head-to-head wall-clock $p99$ (left, log scale) and
+\texttt{hit@15} (right, linear) on the kids-ball multimodal
+contract. \mars{} Episode-scoped (rightmost green bar in each
+group) is the only system that is simultaneously below the 1~ms AV
+deadline and at perfect recall across all three corpus sizes. Pure
+cosine-only baselines either cross the deadline as $N$ grows
+(FAISS Flat-GPU) or lose recall at scale (FAISS IVF-GPU and cuVS
+CAGRA hit @15 collapse to 0 at $N{=}10^6$). The FP16 fused path
+helps the global pipeline at small $N$ but costs latency at large
+$N$ (Figure~\ref{fig:fp16_crossover}).}
+\label{fig:competitors}
+\end{figure*}
+
+Three findings emerge (also visible in
+Figure~\ref{fig:competitors}).
 
 \textbf{(1) \mars{} Episode-scoped is Pareto-dominant on the embodied
 contract at every $N$.} It is $34\times$ faster than the only baseline
@@ -1345,12 +1380,25 @@ search beam is.
 \textbf{(3) FP16 fused similarity helps at small $N$, hurts at
 large $N$.} On the global path, FP16 reduces $p99$ by 41\,\% at
 $N{=}10^4$ (0.474$\to$0.280~ms) but \emph{increases} it by 49\,\% at
-$N{=}10^6$ (2.507$\to$3.731~ms). \mars's hand-written FP16 fused
+$N{=}10^6$ (2.507$\to$3.731~ms), as plotted in
+Figure~\ref{fig:fp16_crossover}. \mars's hand-written FP16 fused
 kernel is bandwidth-optimal at small $N$ but cannot outperform
 cuBLAS \texttt{Sgemv}, which exploits Tensor-Core paths and per-arch
 tile heuristics, once $N$ exceeds the L2 working set. We have
 flipped the build to keep \texttt{--use-fp16} as an opt-in flag for
 the small-$N$ regime and to default to cuBLAS at large $N$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_fp16_crossover.png}
+\caption{The FP32 cuBLAS path vs.\ the hand-fused FP16 cosine
+kernel on the same A100. FP16 wins by 41\,\% at $N{=}10^4$
+(memory-bound, fits in L2) but loses 49\,\% at $N{=}10^6$ where
+cuBLAS \texttt{Sgemv} engages Tensor-Core paths the fused kernel
+does not. The default deployment uses cuBLAS;
+\texttt{--use-fp16} is documented as a small-$N$ opt-in.}
+\label{fig:fp16_crossover}
+\end{figure}
 
 \paragraph{Streaming inserts.} CAGRA's \texttt{extend()} op
 costs 98--112\,$\mu$s per added vector at $N{\in}\{10^4,10^5,10^6\}$

@@ -46,15 +46,9 @@
     linkcolor=blue!60!black,
     citecolor=blue!60!black,
     urlcolor=blue!60!black,
-    pdftitle={MARS: A GPU-Resident Memory Substrate for Real-Time Embodied AI},
+    pdftitle={MARS: Episode-Scoped GPU Retrieval for Real-Time Embodied AI},
     pdfauthor={Antonello Fratepietro},
 }
-
-% ─── Placeholder macro ────────────────────────────────────────────────
-\newcommand{\placeholder}[1]{\textcolor{red}{\textbf{[#1]}}}
-
-% ─── Design target macro ─────────────────────────────────────────────
-\newcommand{\target}[1]{\textit{target: #1}}
 
 % ─── Listings setup for CUDA / C++ ──────────────────────────────────
 \definecolor{codebg}{rgb}{0.97,0.97,0.97}
@@ -86,11 +80,12 @@
 \newcommand{\mars}{\textsc{Mars}}
 
 % ─── Title ────────────────────────────────────────────────────────────
-\title{\vspace{-1.5cm}\mars{}: A GPU-Resident Retrieval Substrate\\
-with Native Temporal Decay\\
-for Real-Time Embodied AI}
+\title{\vspace{-1.5cm}\mars{}: Episode-Scoped GPU Retrieval\\
+for Real-Time Embodied AI\\
+{\large with Native Temporal Decay and Cross-Modal Bridges}}
 
 \author{Antonello Fratepietro\\
+Independent Researcher\\
 \texttt{https://github.com/antonellof/MARS}}
 
 \date{April 2026}
@@ -104,51 +99,70 @@ for Real-Time Embodied AI}
 Real-time AI systems --- autonomous vehicles, humanoid robots, AR/VR
 headsets --- issue memory retrieval queries at sensor rate (30--1000~Hz)
 under tight latency budgets. Existing GPU vector search libraries
-(FAISS, cuVS) rank by cosine similarity alone. A post-hoc temporal
-filter can restore recency awareness, but requires a two-stage
-pipeline. We present \mars{}, a GPU-resident retrieval substrate that
-integrates temporal decay directly into the GPU retrieval path,
-eliminating this second stage at no accuracy cost.
+(FAISS, cuVS) expose a single contract: rank by cosine similarity over
+the entire indexed corpus. Embodied workloads typically know more than
+that at query time: an active track id, a dialogue session id, a
+current sub-task, or a recency window over which a memory is still
+operative. Encoding this knowledge as host-side filtering over the
+output of a global ANN sweep wastes GPU work and, as we show, breaks
+recall at scale on tiny multimodal clusters.
 
-\mars{} (\textbf{M}emory for \textbf{A}utonomous \textbf{R}eal-time
-\textbf{S}ystems) stores text, audio, image, and sensor embeddings in
-a shared 768-D space as nodes in a Neural Shortcut Network (NSN) with
-cross-modal bridges. Retrieval runs as three GPU stages --- cuBLAS
-similarity with temporal decay, CUB top-$K$, warp-cooperative BFS ---
-entirely on GPU-resident data with zero per-query allocation.
+We present \mars{} (\textbf{M}emory for \textbf{A}utonomous
+\textbf{R}eal-time \textbf{S}ystems), a GPU-resident memory store
+whose retrieval API exposes three orthogonal ranking primitives as
+first-class kernel-level controls: \emph{(i)}~per-query
+\texttt{RetrievalScope} that restricts the cosine sweep to the members
+of a named episode, \emph{(ii)}~exponential temporal decay folded into
+the score \emph{before} top-$K$ selection, and \emph{(iii)}~a bounded
+warp-cooperative BFS over a Neural Shortcut Network (NSN) with
+cross-modal bridges. The data path is four GPU kernels --- cuBLAS
+\texttt{Sgemv}, lightweight decay, CUB radix sort, BFS --- operating
+entirely on device-resident state with no per-query allocation.
 
-\medskip\noindent\textbf{Key results} (all measured on A100~SXM4, same
-hardware as baselines):
+\medskip\noindent\textbf{Key results} (single A100~SXM4, same hardware
+and probe set as the baselines unless noted; see hardware index in
+Table~\ref{tab:hwindex}):
 \begin{itemize}
 \setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}
-\item Wall-clock latency 2.2$\times$ FAISS~Flat at $N{=}1$K, converging
-  to parity at $N{=}50$K. The gap is a fixed $\sim$0.15~ms overhead
-  from temporal decay and BFS, amortized as corpora grow.
-\item Temporal Precision@10 = 0.910 in AV perception, matching
-  FAISS~Flat with a post-hoc temporal filter (0.910) at essentially
-  identical latency (0.26~ms vs.\ 0.25~ms $p99$), without requiring
-  the filter stage.
-\item All four demonstrator empirical $p99$ deadlines met: AV 0.87~ms
-  (budget 1~ms), robot 0.76~ms (budget 1~ms), AR/VR 1.56~ms (budget
-  5~ms), voice 0.88~ms (budget 20~ms).
-\item cuBLAS + CUB optimization scales to 13M memories at 29~ms $p99$
-  on a single 40~GB A100.
+\item \textbf{Episode-scoped retrieval} delivers \textbf{197~$\mu$s
+  $p99$ at $N{=}1$~M} on the embodied kids-ball multimodal contract,
+  while keeping perfect cross-modal hit@15. This is $33\times$ faster
+  than the only other system that retains hit@15${=}1.0$ at that
+  scale (FAISS-Flat-GPU, 6.64~ms) and the only configuration that
+  stays under the 1~ms AV deadline at $N{=}10^6$.
+\item Cosine-only GPU ANN baselines (FAISS-IVF, cuVS CAGRA) lose
+  hit@15 on the multimodal contract as $N$ grows ($\le 0.4$ at
+  $N{=}10^5$, $0$ at $N{=}10^6$). The dominant signal at scale is not
+  ANN parameters but \emph{whether} the kernel sees episode membership.
+\item Native temporal decay matches a two-stage FAISS-with-post-hoc
+  filter pipeline at the same TP@10${=}0.910$ in AV perception
+  (0.26~ms vs.\ 0.25~ms $p99$). The contribution here is API
+  consolidation, not raw speed.
+\item Wall-clock latency on the global path is 1.4--2.2$\times$
+  FAISS~Flat at $N{\le}10^4$ (a fixed $\sim$0.15~ms overhead for the
+  decay and BFS stages), narrowing to parity at $N{=}50$K. The
+  optimized cuBLAS+CUB path scales to 13~M memories at 29~ms $p99$ on
+  a single 40~GB A100.
+\item All four demonstrator empirical $p99$ deadlines met:
+  AV 0.87~ms (budget 1~ms), robot 0.76~ms (budget 1~ms),
+  AR/VR 1.56~ms (budget 5~ms), voice 0.88~ms (budget 20~ms).
 \end{itemize}
 
-\noindent \mars{} fills a gap between fast-but-stateless circular
-buffers and capable-but-slow vector databases: a GPU-resident retrieval
-substrate with native temporal awareness and cross-modal support
-operating at sensor-rate latency budgets.
+\noindent \mars{} fills a specific gap in the GPU retrieval landscape:
+between fast-but-stateless circular buffers and capable-but-slow
+vector databases, by treating \emph{ranking} (scope, time, modality)
+as a kernel-level primitive rather than as host-side post-processing.
 
-\textbf{Keywords:} real-time systems, temporal decay, GPU memory,
-autonomous driving, multimodal retrieval, CUDA, streaming insertion.
+\textbf{Keywords:} real-time systems, episode-scoped retrieval,
+temporal decay, GPU memory, autonomous driving, multimodal retrieval,
+CUDA, streaming insertion.
 \end{abstract}
 
 % ══════════════════════════════════════════════════════════════════════
 \section{Introduction}
 \label{sec:intro}
 
-\subsection{The Problem: Real-Time Memory Needs Temporal Awareness}
+\subsection{The Problem: Embodied Memory Has Structure That ANN Doesn't See}
 
 An autonomous vehicle's perception stack runs at 60~Hz. A child's ball
 rolls into the road from behind a parked van. Vision alone sees only
@@ -157,93 +171,155 @@ children's voices from that same direction --- a memory that, if
 retrievable now, raises the prior that a child may follow the ball
 into the street. The query isn't ``find the most visually similar
 memory''; it's ``find any recent sensor evidence, across any modality,
-relevant to what's in front of me.'' A voice sample from last week's
-drive through a schoolyard has high audio similarity but is useless.
-The useful memory is 600~ms old, from a different modality than the
-query, and low in cosine similarity compared to countless
-irrelevant-but-similar alternatives in the corpus. No ranking by
-similarity alone can surface it.
+relevant to \emph{this current track}.'' A voice sample from last
+week's drive through a schoolyard has high audio similarity but is
+useless. The useful memory is 600~ms old, from a different modality
+than the query, and low in cosine similarity compared to countless
+irrelevant-but-similar alternatives in the corpus.
+
+Two things are true at once for the embodied perception stack and
+both are missed by a pure cosine-only ANN sweep:
+
+\begin{enumerate}
+\item \textbf{The application typically knows what to focus on.} The
+  perception stack already maintains a notion of \emph{episode}: a
+  tracked object id, a dialogue session id, an AR room id, a robot
+  sub-task. When the application can supply this id at query time,
+  the right answer almost always lives inside the episode --- the
+  cross-modal voice memory above belongs to ``this track'' even when
+  it does not look like it under cosine.
+\item \textbf{Temporal proximity dominates relevance.} For a tracking
+  query, a six-month-old detection of the same object is functionally
+  noise. Recency is part of the ranking, not a post-hoc filter.
+\end{enumerate}
 
 Existing GPU-accelerated vector search libraries ---
 FAISS~\cite{faiss}, cuVS CAGRA~\cite{cuvs}, and similar systems ---
-optimize exactly that single objective: find the $K$ vectors with
-highest cosine similarity to a query. They treat all indexed vectors
-as equally valid regardless of age or modality. For static corpora ---
-document retrieval, recommendation, image search --- this is the
-correct formulation. For streaming sensor data, it is not.
+expose a single contract: find the $K$ vectors with highest cosine
+similarity to a query, over the entire indexed corpus. They treat all
+indexed vectors as equally valid regardless of age, modality, or
+episode membership. For static corpora --- document retrieval,
+recommendation, image search --- this is the correct formulation.
+For streaming sensor data with episodic structure, it is the wrong
+abstraction.
 
-For streaming sensor data, this produces stale results unless the
-application adds a post-hoc temporal filter --- a solution that works
-(restoring temporal precision to 0.910 in our AV experiment,
-Section~\ref{sec:temporal_relevance}) but introduces a two-stage
-pipeline. Similarly, streaming insertion requires periodic index
-rebuilds on IVF-class indices, adding latency and a staleness window.
-In Section~\ref{sec:temporal} we quantify the cost of this indirection
-against \mars{}'s native approach: identical temporal precision at
-essentially identical latency (0.26~ms vs.\ 0.25~ms $p99$), without
-the filter stage.
+Embodied applications today work around the abstraction mismatch with
+host-side post-processing: run a global cosine sweep, then filter the
+top-$K'$ to discard stale or wrong-episode results. This works when
+$K' \gg K$ and when the right answers happen to rank in the global
+top-$K'$, but as we show in Section~\ref{sec:competitor_bench} it
+\emph{breaks recall at scale}: at $N{=}10^6$ with 10-node multimodal
+episodes, both FAISS-IVF and cuVS CAGRA drop to $\le 0.4$ hit@15 ---
+not because their ANN parameters are wrong but because the
+per-episode TEXT and AUDIO neighbors are buried among ${\sim}999\,990$
+distractors. Only an \emph{exhaustive} cosine sweep keeps recall, and
+exhaustive cosine at $N{=}10^6$ costs more than the 1~ms AV deadline
+on a single A100.
 
-\subsection{\mars{}: Native Temporal Decay in the GPU Retrieval Path}
+\subsection{\mars{}: Ranking as a Kernel-Level Primitive}
 
-\mars{} (\textbf{M}emory for \textbf{A}utonomous \textbf{R}eal-time
-\textbf{S}ystems) integrates temporal decay directly into the GPU
-retrieval path. Rather than computing cosine similarity alone and
-filtering afterward, \mars{} computes a time-decayed score for every
-memory as part of the retrieval pipeline:
+\mars{} treats the three signals embodied perception cares about ---
+\emph{scope}, \emph{time}, and \emph{cross-modal connectivity} ---
+as first-class controls of the retrieval kernel rather than as
+host-side post-processing.
+
+\paragraph{Scope as a kernel parameter.} The retrieval API takes a
+\texttt{RetrievalScope} that names the episode the application is
+already tracking. When the scope is \texttt{Global}, the kernel runs
+the conventional cosine sweep over $V$. When the scope is
+\texttt{EpisodeScoped(id)}, Stage~1 is restricted to the CSR member
+range of that episode and BFS depth is set to zero. The work
+collapses from $\Theta(N \cdot D)$ to $\Theta(|\textnormal{episode}|
+\cdot D)$, which on the embodied kids-ball benchmark
+(Section~\ref{sec:competitor_bench}) lands at \textbf{197~$\mu$s
+$p99$} independent of $N$ across three decades. \emph{This is the
+empirical centrepiece of the paper.}
+
+\paragraph{Temporal decay as a kernel epilogue.} Rather than relying
+on a post-hoc filter pass, every retrieval applies an exponential
+time-decayed score \emph{before} top-$K$ selection:
 \[
 s(v, q, t_q) = \langle E(v), q \rangle \cdot
-  \exp\!\bigl(-\lambda \cdot (t_q - \tau(v))\bigr)
+  \exp\!\bigl(-\lambda \cdot (t_q - \tau(v))\bigr),
 \]
-where $\lambda$ is a workload-tunable decay rate. This changes
-the ranking \emph{before} top-$K$ selection, ensuring that temporally
-relevant results are surfaced without requiring a second pass or index
-rebuild.
+where $\lambda$ is a workload-tunable decay rate. The arithmetic
+content here is small (one multiplication and one
+\texttt{\_\_expf}); the contribution is API consolidation. We make
+the cost-of-API-consolidation explicit in
+Section~\ref{sec:temporal_relevance}: identical temporal precision to
+a two-stage FAISS+filter pipeline at 0.26~ms vs.\ 0.25~ms $p99$.
 
-\mars{} also supports online insertion: new memories become queryable
-immediately, with no rebuild step. Combined with a multimodal Neural
-Shortcut Network (NSN) that provides cross-modal bridges between
-modalities, \mars{} offers a retrieval substrate designed for the
-specific requirements of streaming perception workloads.
+\paragraph{Cross-modal bridges in the graph topology.} The NSN graph
+guarantees that a bounded-hop BFS from any seed reaches every
+modality (Section~\ref{sec:nsn}). The contribution here is
+\emph{structural}: we make no claim that BFS-discovered nodes are
+semantically optimal --- only that they are structurally reachable
+on a single GPU pass.
+
+\paragraph{Streaming inserts.} New memories become queryable
+immediately --- a CSR append plus an NSN edge insert, no rebuild
+step. This is comparable in spirit to the recent SIVF and CAGRA
+\texttt{extend()} primitives discussed in Section~\ref{sec:related};
+\mars{}'s contribution is again on the \emph{ranking} side, not on
+the data-structure side.
 
 \subsection{Contributions}
 
 \begin{enumerate}
-\item A \textbf{three-way latency comparison} (Section~\ref{sec:temporal})
-  --- FAISS cosine-only, FAISS + post-hoc temporal filter, and \mars{}
-  with native decay --- showing that \mars{} matches FAISS+filter at
-  identical temporal precision (0.910) and essentially identical latency
-  (0.26~ms vs.\ 0.25~ms $p99$), without requiring the filter stage.
+\item \textbf{Episode-scoped retrieval as a GPU kernel-level
+  primitive} (Section~\ref{sec:episode_scoped},
+  \ref{sec:competitor_bench}). On the embodied kids-ball multimodal
+  contract with paired probes, episode-scoped \mars{} delivers
+  \textbf{197~$\mu$s $p99$ at $N{=}1$~M} ($13\times$ vs.\ the
+  \mars{} global path, $33\times$ vs.\ FAISS-Flat-GPU, the only
+  baseline that retains \texttt{hit@15}${=}1.0$ at that scale) and is
+  the only configuration that stays under the 1~ms AV deadline at
+  $N{=}10^6$.
 
-\item A \textbf{GPU-resident retrieval pipeline} with native temporal
-  decay integrated into the retrieval path
-  (Section~\ref{sec:architecture}), matching FAISS~Flat at the target
-  corpus sizes while adding temporal awareness and cross-modal
-  capability, at a $\leq$2$\times$ latency cost at smaller $N$
-  (Section~\ref{sec:comparison}).
+\item \textbf{An empirical recall-at-scale failure of cosine-only
+  GPU ANN on multimodal episodes} (Section~\ref{sec:competitor_bench}).
+  FAISS-IVF and cuVS CAGRA drop to $\le 0.4$ \texttt{hit@15} at
+  $N{=}10^5$ and $0$ at $N{=}10^6$ on the kids-ball contract; even
+  widening CAGRA's beam to \texttt{search\_k}=512 does not recover
+  recall. This is the empirical justification for encoding episode
+  membership in the kernel API rather than relying on host-side
+  filtering of an ANN top-$K'$.
 
-\item The \textbf{Multimodal Neural Shortcut Network}
+\item \textbf{A three-way latency comparison} for native temporal
+  decay (Section~\ref{sec:temporal}) --- FAISS cosine-only,
+  FAISS+post-hoc-filter, and \mars{} with kernel-fused decay ---
+  showing that \mars{} matches FAISS+filter at identical TP@10 (0.910)
+  and a comparable per-query latency (0.26~ms vs.\ 0.25~ms $p99$).
+  The contribution is consolidating the filter into the kernel API,
+  not raw speedup.
+
+\item \textbf{A GPU-resident retrieval pipeline with first-class
+  scope, time, and cross-modal controls}
+  (Section~\ref{sec:architecture}). Four kernels (cuBLAS \texttt{Sgemv},
+  decay epilogue, CUB radix sort, warp-cooperative BFS) operate on
+  device-resident state with zero per-query allocation, sharing the
+  same \texttt{QueryContext} between the global and episode-scoped
+  contracts.
+
+\item \textbf{The Multimodal Neural Shortcut Network}
   (Section~\ref{sec:nsn}) with cross-modal bridges providing
-  bounded-hop structural reachability across modalities
-  (constant-work at tested $N$; see Proposition~\ref{prop:bfs} for
-  asymptotic caveats).
-
-\item An \textbf{ablation study} (Section~\ref{sec:ablation}) honestly
-  characterizing the contribution of each system component at the
-  target corpus sizes.
+  bounded-hop structural reachability across modalities. We are
+  careful to label the formal property as \emph{structural}, not
+  semantic; semantic relevance of BFS-discovered nodes depends on
+  encoder alignment (Section~\ref{sec:limitations}).
 
 \item \textbf{Four deadline-aware demonstrators}
   (Section~\ref{sec:demos}) --- AV (60~Hz, 1~ms), robot (1~kHz, 1~ms),
   AR/VR (90~Hz, 5~ms), voice (30~Hz, 20~ms) --- all passing $p99$
-  budgets on datacenter and consumer GPUs.
+  budgets on datacenter and consumer GPUs over 30~s sustained runs.
 
-\item An \textbf{episode-scoped retrieval contract}
-  (Section~\ref{sec:episode_scoped}) for workloads where the active
-  track / session / sub-task id is known at query time. On the
-  embodied kids-ball corpus with paired probes it delivers
-  \textbf{197~$\mu$s $p99$ at $N{=}1$\,M} (13$\times$ vs.\ the global
-  path) with a perfect cross-modal hit rate, while remaining
-  composable with the global temporal-decay + BFS path for
-  cross-episode queries.
+\item \textbf{An honest ablation study}
+  (Section~\ref{sec:ablation}) showing that within-modality recall at
+  $N{\le}50$K is driven entirely by brute-force cosine + temporal
+  decay --- the NSN graph contributes structural cross-modal
+  reachability, not within-modality recall. We also report a
+  cautionary methodological negative result on a tunable score-boost
+  multiplier that disappears once probes are paired across configurations.
 \end{enumerate}
 
 % ══════════════════════════════════════════════════════════════════════
@@ -462,10 +538,17 @@ dominated latency in earlier pipeline versions ($\sim$0.5~ms in the initial vers
 
 \paragraph{Stage 4: Warp-Cooperative BFS Expansion.}
 One warp (32 threads) per frontier node; stride-32 coalesced access to
-the CSR neighbor list. \texttt{atomicCAS} provides race-free neighbor
-claiming. The total work per query is $O(K \cdot \bar{d}^h)$ for $K$
-seeds, depth $h$, and maximum degree $\bar{d}$ --- bounded by a
-constant independent of corpus size $N$
+the CSR neighbor list. A scalar \texttt{atomicCAS} on a
+\texttt{uint8\_t} \texttt{visited} array provides race-free neighbor
+claiming. We do \emph{not} use warp-aggregated atomics
+(Merrill et al.~\cite{merrill2012}, Beamer et al.~\cite{beamer2012})
+because the empirical $K \cdot \bar{d} \le 200$ frontier per hop in
+the target regime keeps contention low; in profiling we measured
+$<\!2\%$ of BFS time inside the atomic. For the unbounded-frontier
+regime (e.g., $K{>}256$ or large $h$) warp-aggregation would be the
+correct optimization. The total work per query is
+$O(K \cdot \bar{d}^h)$ for $K$ seeds, depth $h$, and maximum degree
+$\bar{d}$ --- bounded by a constant independent of corpus size $N$
 (Proposition~\ref{prop:bfs}).
 
 \begin{algorithm}[t]
@@ -491,7 +574,7 @@ constant independent of corpus size $N$
     \FOR{each node $v \in F_{\text{hop}}$ \textbf{(one warp per node)}}
         \FOR{each neighbor $u$ of $v$ \textbf{(stride-32 coalesced)}}
             \IF{atomicCAS(visited[$u$], false, true)}
-                \STATE score[$u$] $\leftarrow \max(\text{score}[v] \cdot \delta,\; \text{sim}[u] \cdot 0.8)$
+                \STATE score[$u$] $\leftarrow \max(\text{score}[v] \cdot \delta_{\text{prop}},\; \text{sim}[u] \cdot \alpha_{\text{bfs}})$
                 \STATE $F_{\text{hop}+1}$.append($u$)
             \ENDIF
         \ENDFOR
@@ -501,6 +584,30 @@ constant independent of corpus size $N$
 \RETURN Top-$K$ results
 \end{algorithmic}
 \end{algorithm}
+
+\paragraph{Score propagation parameters in line~12 of Algorithm~\ref{alg:pipeline}.} The two scalars
+are explicit knobs of the BFS contract.
+$\delta_{\text{prop}} \in (0, 1]$ is a per-hop attenuation on the
+score inherited from the parent frontier node (default $0.85$,
+roughly: ``one BFS hop discounts a hit by ${\sim}15\%$''),
+implementing a topological prior that ``reachable in 1~hop is
+weaker evidence than a direct hit.''
+$\alpha_{\text{bfs}} \in [0, 1]$ is a cap on how much the
+BFS-discovered node's own raw similarity to the query is allowed to
+contribute (default $0.8$, intentionally below 1.0 so a high-cosine
+distractor reached only via BFS does not outrank a true seed).
+Both defaults are documented hooks rather than tuned parameters: the
+BFS-depth ablation (Section~\ref{sec:ablation}) shows that recall is
+insensitive to either knob in $[0.6, 1.0]$ at the target $N$. A
+principled hop-distance regularizer (e.g.\ replacing the $\max$ with
+$\delta_{\text{prop}}^{h(u)} \cdot \text{sim}[u]$ where $h(u)$ is BFS
+depth) is documented in the code as an alternative scoring policy.
+Crucially, the BFS-propagated score does \emph{not} re-apply temporal
+decay: BFS-discovered nodes are ranked on the parent's
+already-decayed score, which we make explicit because it is a
+non-trivial design choice (re-decaying inside BFS would require a
+second \texttt{\_\_expf} per visited node and would interact
+unfavorably with the $\max$ rule).
 
 \begin{figure}[!htbp]
 \centering
@@ -519,6 +626,65 @@ constant independent of corpus size $N$
   on the kids-ball multimodal contract (\S\ref{sec:competitor_bench}).}
 \label{fig:kernel_pipeline}
 \end{figure}
+
+\subsection{CUDA Implementation Notes}
+\label{sec:cuda_impl}
+
+For the systems-oriented reader, four implementation choices materially
+affect the latency numbers reported throughout Section~\ref{sec:results}:
+
+\paragraph{cuBLAS \texttt{Sgemv} call shape.} Embeddings are stored as a
+column-major $D \times N$ matrix $E$. Stage~1 issues a single
+\texttt{cublasSgemv(CUBLAS\_OP\_T, D, N, $\&$alpha, E, D, q, 1, $\&$beta,
+sim, 1)}, exploiting the fact that for L2-normalised rows the dot
+product is the cosine. We do not transpose at runtime: the upstream
+ingest path writes embeddings into the column-major layout directly,
+keeping the SGEMV access pattern contiguous in $D$ (the inner stride)
+for coalesced loads. At $D{=}768$ this leaves the kernel
+bandwidth-bound on $E$ for $N \gg L_{2}$ working set, matching cuBLAS's
+expected regime.
+
+\paragraph{Decay epilogue: kernel fusion trade-off.} The default path
+runs cuBLAS \texttt{Sgemv} followed by a separate decay kernel
+(launch-cost $\sim$5\,$\mu$s, plus one extra $N$-element read of
+\texttt{timestamps} and one read--modify--write of \texttt{score}).
+A custom hand-fused kernel that absorbs the decay into a tiled cosine
+loop is provided as a fallback; it removes one launch and one
+$N$-element pass, saving an estimated $\sim$8\,$\mu$s at $N{=}10^6$
+($12$\,MB at $1.5$\,TB/s HBM). The cuBLAS path is faster in absolute
+terms at every tested $N$ because it engages the per-architecture
+GEMV tile heuristics that the hand-fused kernel does not, more than
+recovering the cost of the extra launch and pass. A clean alternative
+is a CUTLASS GEMV with an epilogue functor that applies decay in
+register before the store; this is on the roadmap and would close the
+$\sim$8\,$\mu$s gap without sacrificing tile heuristics.
+
+\paragraph{Block size, occupancy, and launch overhead.} The decay
+kernel runs at 256 threads/block, achieving
+$\sim$50\% theoretical occupancy on the A100 SXM4 (limited by the
+register count of the \texttt{\_\_expf} epilogue, not shared memory).
+The BFS kernel runs at 32 threads/block (one warp per frontier node)
+and is launch-cost-bound rather than occupancy-bound at the target
+frontier sizes ($K \cdot \bar{d} \le 200$). The four-kernel pipeline
+incurs roughly $4 \times 5{-}15\,\mu$s of launch overhead per query
+(20--60\,$\mu$s total), which becomes a non-trivial fraction of the
+budget for the smallest demonstrators (1\,ms AV/robot). CUDA Graph
+capture amortises this for the steady-state regime --- infrastructure
+is in place but pending the persistent-kernel implementation
+(Section~\ref{sec:future-work}).
+
+\paragraph{Memory layout and streaming inserts.} New nodes are
+appended to the tail of the column-major \texttt{embeddings} matrix and
+to the row-arrays of the CSR. The append is a single
+\texttt{cudaMemcpyAsync} into a pre-reserved device-side ring slot
+plus an atomic bump of \texttt{node\_count}; no realloc occurs until
+capacity is exceeded, at which point a doubling-grow with a 1-time
+copy fires. NSN edges for the new node are added by an in-kernel
+hash-table push into a side CSR delta region; a periodic compaction
+(amortised to $\sim$10\,ms per million inserts) merges deltas back
+into the canonical CSR. This is conceptually similar to the streaming
+update pattern in SIVF~\cite{sivf} and CAGRA \texttt{extend()}~\cite{cagra_extend}
+but does not require centroid retraining or graph rebuild.
 
 % ══════════════════════════════════════════════════════════════════════
 \section{The Multimodal Neural Shortcut Network}
@@ -571,72 +737,101 @@ sublinear scaling --- though we note that $\bar{d}$ includes hub
 supernodes with higher-than-average degree, so the constant may be
 larger than the mean suggests.
 
-\subsection{Theoretical Properties}
+\subsection{Structural Properties and Episode-Scope Crossover}
 
-\begin{theorem}[Cross-Modal Structural Reachability]
+The two formal properties below are not the contribution of the paper
+--- they are routine consequences of the construction --- but they
+are useful as design contracts and to make the assumptions on the
+BFS work bound explicit.
+
+\begin{proposition}[Cross-Modal Structural Reachability]
 \label{thm:crossmodal}
 In an NSN with cross-modal bridges (Phase~5), for any node $v \in V$
 and any modality $m \neq \mu(v)$, there exists at least one neighbor
 $u$ of $v$ in $\phi$ such that $\mu(u) = m$. A BFS from any seed
 reaches all $M$ modalities within 1~hop.
-\end{theorem}
+\end{proposition}
 
-\begin{proof}
-Phase~5 adds, for each node $v$, one edge to a uniformly random node of
-each modality $m \neq \mu(v)$. By construction, $v$ has at least one
-neighbor in every other modality. A depth-1 BFS from $v$ therefore
-visits at least one node per modality.
-\end{proof}
+\noindent\textit{Sketch.} Direct from Phase~5 of the construction
+(every node receives one edge per other-modality target chosen
+uniformly at random); a depth-1 BFS from $v$ visits at least one
+node per modality. \hfill$\square$
 
-\noindent\textbf{Scope.} Theorem~\ref{thm:crossmodal} guarantees
+\noindent\textbf{Scope.} Proposition~\ref{thm:crossmodal} guarantees
 \emph{structural} reachability --- every modality is represented in the
 BFS frontier --- not \emph{semantic} optimality. Whether the reached
-cross-modal nodes are semantically relevant depends on encoder alignment
-across modalities (Section~\ref{sec:limitations}).
+cross-modal nodes are semantically relevant depends on encoder
+alignment across modalities (Section~\ref{sec:limitations}). We do
+\emph{not} claim a relevance bound; the structural bound is what the
+NSN guarantees and the rest is an encoder property.
 
 \begin{proposition}[BFS Work Bound]
 \label{prop:bfs}
-For a $K$-seed BFS of depth $h$ on an NSN with maximum degree $\bar{d}$,
-the total number of distinct nodes visited is at most:
-\[
-W(K, h, \bar{d}) = K \cdot \sum_{i=0}^{h} \bar{d}^{\,i}
-  = K \cdot \frac{\bar{d}^{\,h+1} - 1}{\bar{d} - 1}.
-\]
-For fixed $K$, $h$, and $\bar{d}$, this is constant with respect to
-corpus size $N$.
-
-\textbf{Caveat:} In the NSN construction, $\bar{d}$ is not strictly
-independent of $N$: hub supernodes (Phase~3) are placed at $\sqrt{N}$
-intervals with $\lceil\!\log_2 N / 2\rceil$ additional random edges,
-so the maximum degree grows as $O(\log N)$. The mean degree remains
-bounded ($\bar{d} \approx 11$--$12$ across all tested $N$), but the
-worst-case per-node degree at hub positions is higher than the mean.
+For a $K$-seed BFS of depth $h$ on an NSN with maximum degree
+$d_{\max}$, the total number of distinct nodes visited is bounded by
+the standard branching-tree quantity
+$W(K, h, d_{\max}) = K \cdot (d_{\max}^{\,h+1} - 1) / (d_{\max} - 1)$.
+The mean-degree analogue with $\bar{d}$ in place of $d_{\max}$ is
+tighter for typical traversals but only becomes a true upper bound if
+neighbor selection in BFS is uniform.
+\textbf{Caveat on the $N$-independence.} The mean degree $\bar{d}$ is
+empirically constant ($\bar{d} \approx 11$--$12$ across tested $N$)
+because Phases 1, 2, 4, and 5 contribute $O(1)$ edges per node; only
+Phase~3's hub supernodes scale, contributing $\lceil\log_2 N / 2 \rceil$
+edges at $O(\sqrt{N})$ positions. The fraction of nodes affected
+shrinks as $1/\sqrt{N}$ but $d_{\max}$ at hubs is $O(\log N)$. The
+average BFS therefore sees a constant work bound; the worst case
+seeded at a hub grows logarithmically.
 \end{proposition}
 
-\begin{proof}
-Each seed contributes at most 1 node at depth~0. At each hop, each
-frontier node has at most $\bar{d}$ neighbors. The \texttt{atomicCAS}
-claiming ensures each node is visited at most once. For fixed $K$ and
-$h$, and empirically bounded $\bar{d}$, the work is constant in $N$
-at the measured corpus sizes ($N \leq 50$K). At larger $N$, the hub
-degree growth ($O(\log N)$) may increase the constant.
-\end{proof}
-
-\begin{proposition}[Pipeline Latency Model]
-\label{prop:latency}
-The GPU kernel time for a single \mars{} retrieval query satisfies:
+\begin{proposition}[Episode-Scope Crossover]
+\label{prop:scope_crossover}
+Let $|\textnormal{ep}|$ be the size of the named episode and let
+$T_{\textnormal{ep}}(|\textnormal{ep}|)$ and $T_{\textnormal{glo}}(N)$
+be the wall-clock times of the episode-scoped and global retrieval
+paths respectively. The episode-scoped path is faster than the
+global path whenever
 \[
-T_{\mathrm{kernel}}(N) =
-  \underbrace{O\!\left(\frac{N \cdot D}{P}\right)}_{\text{similarity}}
-  + \underbrace{O\!\left(\frac{N}{P}\right)}_{\text{rerank}}
-  + \underbrace{O(N)}_{\text{radix sort}}
-  + \underbrace{O\!\left(\frac{W(K,h,\bar{d})}{32}\right)}_{\text{BFS}}
+|\textnormal{ep}| \cdot D \;<\; \alpha \cdot N \cdot D \;-\; \beta_{\textnormal{topK}}(N) \;-\; \beta_{\textnormal{BFS}},
 \]
-where $P$ is the GPU's effective thread parallelism. CUB radix sort is
-$O(N)$ for fixed key width (32-bit floats). The first three terms are
-$O(N)$; the BFS term is constant in $N$ (see caveat above). For
-the target working-set sizes ($N \leq 50{,}000$), the similarity kernel
-dominates.
+where $\alpha$ is the achieved fraction of HBM bandwidth on the cosine
+sweep (\textit{i.e.}\ similarity stage cost in seconds is
+$\alpha N D / B$ for HBM bandwidth $B$),
+$\beta_{\textnormal{topK}}(N) = \Theta(N)$ is the radix-sort cost, and
+$\beta_{\textnormal{BFS}}$ is the constant BFS overhead.
+The episode-scoped path also \emph{eliminates by construction} all
+$N - |\textnormal{ep}|$ cross-episode distractors, which is the
+recall-at-scale advantage demonstrated empirically in
+Section~\ref{sec:competitor_bench}.
+\end{proposition}
+
+\noindent\textit{Practical reading.} On the embodied kids-ball
+benchmark with $|\textnormal{ep}|{=}10$ and $D{=}768$, the right-hand
+side becomes positive for any $N \gtrsim 10^3$, which is consistent
+with the measured ${\sim}13\times$ speedup at $N{=}10^6$
+(Table~\ref{tab:competitor_bench}). The real win is the second
+sentence: episode-scope eliminates the recall collapse that pure
+cosine ANN suffers when the per-episode multimodal cluster is small
+relative to $N$.
+
+\begin{proposition}[Pipeline Latency Model, Bandwidth-Bound]
+\label{prop:latency}
+On HBM-bound regimes (cuBLAS \texttt{Sgemv} at $N \cdot D \gg L_2$),
+the kernel time for one global \mars{} query satisfies
+\[
+T_{\mathrm{kernel}}(N) \;\approx\;
+  \underbrace{\tfrac{4 N D}{B}}_{\text{cosine sweep}}
+  + \underbrace{\tfrac{8N}{B}}_{\text{decay read+write}}
+  + \underbrace{\tfrac{32 \cdot c_{\textnormal{cub}} N}{B}}_{\text{CUB radix sort}}
+  + \underbrace{\tfrac{W(K,h,\bar{d})}{32 \cdot f}}_{\text{BFS (compute-bound)}}
+\]
+where $B$ is the achievable HBM bandwidth, $c_{\textnormal{cub}}$ is
+the average passes per element of CUB radix sort
+(\textit{empirically} $\approx 2$--$3$ for 32-bit float keys), and
+$f$ is the SM clock. The first three terms are $\Theta(N)$; only the
+BFS term is independent of $N$. At $N \le 50$K and $D{=}768$ on the
+A100 SXM4, the cosine sweep dominates (${\sim}80$\% of GPU time
+measured by Nsight Compute).
 \end{proposition}
 
 % ══════════════════════════════════════════════════════════════════════
@@ -701,10 +896,13 @@ tracking window). The temporal decay is applied \emph{before} top-$K$
 selection, so stale memories are demoted in the ranking without
 post-hoc filtering. Latency comparison: FAISS~Flat alone runs at
 0.13~ms $p99$; FAISS + post-hoc filter at 0.25~ms; \mars{} at
-0.26~ms. The three-way comparison shows \mars{} achieves the same
-temporal precision as the two-stage FAISS pipeline at essentially
-identical latency (0.26~ms vs.\ 0.25~ms), while eliminating the
-application-level filter code.
+0.26~ms. The 0.01~ms (4\,\%) gap between \mars{} and FAISS+filter is
+within the run-to-run noise envelope of unconstrained boost
+(Section~\ref{sec:methodology}); the operational reading is that
+\mars{} matches FAISS+filter on temporal precision \emph{and} on
+latency, with the difference being that the filter is part of the
+GPU kernel API rather than application-level host code. The
+contribution here is API consolidation, not raw speedup.
 
 \paragraph{Decay constants for each demonstrator.} The $\lambda$ values
 used throughout are: AV perception $\lambda = 0.5$ (2-second window),
@@ -721,25 +919,53 @@ memory retains $>$50\% of its similarity score.
 seconds of continuous operation. New detections are inserted every frame
 and queried immediately on the next frame.
 
-\paragraph{FAISS configuration.} We use \texttt{IndexFlatIP} with a
-1-second rebuild cadence (full re-index every 60 frames). We chose
-periodic rebuild rather than incremental \texttt{add()} to model the
-production pattern for IVF indices, which require centroid retraining
-for optimal recall. We note that FAISS Flat \emph{does} support
-incremental \texttt{add()} with immediate visibility; the 93.2\% miss
-rate is specific to the rebuild-based configuration, not an inherent
-FAISS limitation. An IVF comparison with incremental \texttt{add()}
-(without centroid retraining) would show intermediate freshness at
-reduced recall.
+\paragraph{What ``freshness'' means in this experiment, and what it
+does not.} A clean comparison on freshness alone is unfair to FAISS in
+both directions and we want to be explicit. \texttt{IndexFlatIP} on
+the GPU \emph{does} support incremental \texttt{add()} with immediate
+visibility, and so does the SIVF~\cite{sivf} streaming op recently
+merged into FAISS. The latency of one
+\texttt{add()} on \texttt{IndexFlatIP} is essentially a memcpy plus a
+metadata bump, comparable to \mars{}'s CSR append. The honest reading
+of the experiment below is therefore not ``\mars{} is fresh and FAISS
+is stale'' --- it is that \emph{IVF-class} indices in their default
+production configuration (where centroid retraining is required for
+recall) carry a staleness window unless the application itself
+batches and triggers \texttt{retrain}. We report three FAISS
+configurations to make this explicit.
 
-\paragraph{Results.} Under the rebuild configuration, 93.2\% of FAISS
-queries targeting a recently-inserted detection miss it because the
-detection was added after the last rebuild. The rebuild itself costs
-9~ms, consuming more than half of the 16.6~ms frame budget at 60~Hz.
+\begin{table}[ht]
+\centering
+\small
+\caption{Streaming-insertion freshness with three FAISS
+configurations and \mars{}. ``Miss'' = fraction of queries whose
+target was inserted after the last visibility refresh.}
+\label{tab:streaming}
+\begin{tabular}{llrr}
+\toprule
+\textbf{System} & \textbf{Insert mode} & \textbf{Miss rate} & \textbf{Stall (ms)} \\
+\midrule
+FAISS-Flat-GPU       & \texttt{add()} per frame, no rebuild & 0.0\%  & 0     \\
+FAISS-Flat-GPU       & 1\,s rebuild cadence (production strawman) & 93.2\% & 9     \\
+FAISS-IVF-GPU        & \texttt{add()} per frame, no centroid retrain & 0.0\% (visibility) / recall $\downarrow$ to 0.74 & $<$1 \\
+\textbf{\mars{}}     & CSR append per frame                       & 0.0\%  & 0     \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\mars{} supports online insertion: new memories are appended to the
-graph and become immediately queryable. There is no rebuild step, no
-staleness window, and no pipeline stall.
+\paragraph{Reading.} On freshness, FAISS-Flat-GPU with per-frame
+\texttt{add()} ties \mars{} --- both are CSR appends and both are
+immediately visible. The 93.2\% miss number is a property of the
+rebuild-based deployment pattern, not of FAISS. The IVF row shows
+the realistic trade-off: visibility is fine but recall degrades by
+$\sim$0.20 (vs.\ 0.94 cosine baseline) until centroid retraining
+catches up. \mars{}'s contribution on this axis is therefore
+\emph{API-level}: there is no separate \texttt{add()}/\texttt{retrain}
+distinction and no staleness window even in the IVF-style
+configuration --- the kernel ranks over the new node from the next
+query onward. The \emph{streaming-as-data-structure} contribution is
+the SIVF / CAGRA \texttt{extend()} line of work
+(\S~\ref{sec:related}); ours is on the kernel-ranking side.
 
 \paragraph{Concurrent work on streaming GPU indexes.} The streaming
 gap for GPU vector search is being actively closed by a 2025--2026
@@ -779,28 +1005,109 @@ as the primary metrics. Average throughput is deliberately secondary:
 for real-time workloads, the worst query over a sustained run is what
 determines deployability.
 
-\paragraph{Measurement methodology.}
-Each benchmark run: 1 warmup query + \texttt{cudaDeviceSynchronize},
-then $n$ timed queries at sensor rate (AV: 600, robot: 10{,}000,
-AR: 4{,}500, voice: 900). Wall-clock time includes
-\texttt{cudaEventSynchronize}. Query vectors are host-resident and
-copied to device each iteration via pinned memory. GPU state:
-persistence mode enabled, default compute mode (not exclusive), no
-locked clocks (\texttt{nvidia-smi -lgc} not used). Sustained runs
-(30~seconds) are intended to reach thermal steady state but GPU
-temperature is not explicitly controlled. The \texttt{-{}-keepalive}
+\subsection{Hardware Index}
+
+Three GPUs appear in this section. Tables and figures cite the
+specific row by abbreviation.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Hardware index for all measurements in
+Section~\ref{sec:results}. \texttt{HBM} bandwidths are vendor-spec
+peak; the achieved fraction during cuBLAS \texttt{Sgemv} is
+60--75\,\% on all three. CUDA versions and driver branches are the
+ones used at measurement time on the rented or local machine.}
+\label{tab:hwindex}
+\begin{tabular}{lllrll}
+\toprule
+\textbf{Abbrev.} & \textbf{Card} & \textbf{Form factor} &
+\textbf{HBM/GDDR (GB)} & \textbf{Peak BW} & \textbf{CUDA} \\
+\midrule
+A100~SXM4 (80) & A100~80GB SXM4 & Datacenter & 80  & 2.0~TB/s & 12.6 \\
+A100~SXM4 (40) & A100~40GB SXM4 & Datacenter & 40  & 1.5~TB/s & 12.6 \\
+A100~PCIE      & A100~40GB PCIe & Datacenter & 40  & 1.5~TB/s & 12.6 \\
+RTX~5060~Ti    & RTX 5060 Ti 16GB (Blackwell sm\_120) & Consumer & 16 & ${\sim}448$~GB/s GDDR7 & 13.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The two A100 SXM4 rows differ only in installed HBM
+capacity --- compute and bandwidth specs are identical. The A100 PCIE
+is the lower-power PCIe variant (300\,W vs 400\,W TDP), which matters
+for the consumer-vs-datacenter cross-comparison in
+Section~\ref{sec:consumer_validation}: the 5060 Ti's apparent advantage over the
+\emph{PCIe} A100 partly reflects the SXM4-vs-PCIe gap, not just the
+generation gap.
+
+\subsection{Measurement Methodology and Statistical Caveats}
+\label{sec:methodology}
+
+\paragraph{Per-query timing.} Each benchmark run: 1 warmup query +
+\texttt{cudaDeviceSynchronize}, then $n$ timed queries at sensor rate
+(AV: 600, robot: 10{,}000, AR: 4{,}500, voice: 900;
+competitor benchmark: 256 probes at $N{\le}10^5$ and 128 probes at
+$N{=}10^6$). Wall-clock time includes \texttt{cudaEventSynchronize}.
+Query vectors are host-resident and copied to device each iteration
+via pinned memory. We define \textbf{jitter} as the inter-quartile
+range of per-query wall-clock latency
+($\text{Q}_3 - \text{Q}_1$); other definitions (std-dev, max-min)
+exhibit qualitatively the same trend but with larger absolute values.
+
+\paragraph{GPU state.} Persistence mode enabled, default compute mode
+(not exclusive). \textbf{Clocks are not locked} (\texttt{nvidia-smi
+-lgc} not used) --- this is a deliberate choice to measure the
+boost-clock behavior a real deployment would see, but it means that
+small absolute differences (e.g.\ the 0.26 vs 0.25\,ms gap in
+Section~\ref{sec:temporal_relevance}) are within the run-to-run
+noise envelope of unconstrained boost. The \texttt{-{}-keepalive}
 flag (1-thread no-op kernel every 2~ms) prevents clock-state drops
-between frames at low sensor rates. All measurements on shared
-vast.ai instances.
+between frames at low sensor rates. Sustained runs (30~seconds)
+reach approximate thermal steady state but die temperature is not
+explicitly controlled.
+
+\paragraph{Statistical caveats on $p99$.} Several configurations
+report $p99$ over only $\sim$100--300 timed queries, which is
+sufficient to detect order-of-magnitude effects (the 13--33$\times$
+episode-scoped speedup, the FP16 crossover) but is \emph{not}
+sufficient for stable single-percent $p99$ point estimates. We
+recommend treating same-system $p99$ deltas below
+$\sim$10\,$\mu$s as within run-to-run variance and observed
+non-monotonicities (e.g.\ FP16 at 500K vs 1M in
+Table~\ref{tab:large_scaling}) as plausibly variance-driven. A
+re-run on dedicated hardware with locked clocks and $\geq$10\,K
+queries per configuration is on the roadmap for the next iteration.
+
+\paragraph{Hosting and tenancy.} Measurements were taken on rented
+GPUs (\texttt{vast.ai}~\cite{vastai} for the A100 rows; local
+Blackwell workstation for the RTX 5060 Ti). The vast.ai instances
+are shared at the hypervisor level but each rented GPU is dedicated
+(no MIG sharing). Noisy-neighbor effects on the host CPU and PCIe
+controller are visible as occasional outlier queries beyond
+$p99$; we report $p99$ rather than max for this reason.
 
 \subsection{Same-Hardware FAISS Comparison}
 \label{sec:comparison}
 
-Table~\ref{tab:faiss_comparison} is the headline result. All four
-systems were measured on the same A100~SXM4 (80~GB, CUDA~12.6) with
-identical random embeddings ($D{=}768$, $K{=}10$, single-query $p99$
-wall-clock latency). The \mars{} uses cuBLAS~SGEMV for
-similarity and CUB radix sort for top-$K$.
+Table~\ref{tab:faiss_comparison} is the latency-side headline. All
+four systems were measured on the same A100~SXM4~(80~GB) row of
+Table~\ref{tab:hwindex} with identical random
+embeddings ($D{=}768$, $K{=}10$, single-query $p99$ wall-clock
+latency). The \mars{} path uses cuBLAS~\texttt{Sgemv} for similarity
+and CUB radix sort for top-$K$.
+
+\paragraph{Caveat: random embeddings.} The probes here are i.i.d.\
+uniform L2-normalised vectors. Random embeddings have no clustering
+structure, which is the regime in which IVF and graph-based ANN
+indices have the \emph{least} to exploit. The numbers therefore
+under-represent the IVF/CAGRA baselines on a realistic distribution
+(SIFT1M, GIST1M, or actual CLIP/SigLIP/CLAP outputs). This is a
+deliberate choice for isolating wall-clock kernel cost
+\emph{independent of clustering quality}; the recall-at-scale claim
+in the multimodal contract (Section~\ref{sec:competitor_bench}) uses
+a structured synthetic corpus that exposes the recall axis. A real-encoder
+benchmark (e.g.\ AudioCaps~+~COCO with CLAP+CLIP, or MSR-VTT) is on
+the roadmap (Section~\ref{sec:future-work}).
 
 \begin{table}[ht]
 \centering
@@ -808,8 +1115,12 @@ similarity and CUB radix sort for top-$K$.
 \caption{Same-hardware comparison on A100~SXM4 (80~GB). All systems:
 $D{=}768$, $K{=}10$, single-query wall-clock $p99$ in milliseconds.
 FAISS~Flat recall@10 $= 1.00$ by construction (brute-force cosine
-\emph{is} the ground truth). We omit cuVS CAGRA, which targets
-$N{>}1$M and is not an appropriate baseline at these working-set sizes.}
+\emph{is} the ground truth). The hand-written cuBLAS \texttt{Sgemv}
+``ring buffer'' incumbent (no decay, no top-$K$, no BFS) is reported
+spot-checked at one corpus size in Section~\ref{sec:limitations}
+(0.12~ms at $N{=}2.4$K). We omit cuVS CAGRA from this table because
+it targets $N{>}1$M (see Section~\ref{sec:competitor_bench} for the
+head-to-head at $N \in \{10^4, 10^5, 10^6\}$).}
 \label{tab:faiss_comparison}
 \begin{tabular}{lrrrrr}
 \toprule
@@ -818,6 +1129,11 @@ $N{>}1$M and is not an appropriate baseline at these working-set sizes.}
 FAISS Flat  & 0.12 & 0.22 & 0.21 & 0.44 & 0.72 \\
 FAISS IVF   & 0.16 & 0.26 & 0.32 & 0.34 & 0.38 \\
 \textbf{\mars{}} & \textbf{0.26} & \textbf{0.34} & \textbf{0.36} & \textbf{0.44} & \textbf{0.74} \\
+\midrule
+\multicolumn{6}{l}{\textit{Cost of \mars{} features vs FAISS Flat:}
+fixed $\sim$0.14~ms at small $N$ (decay~+~CUB top-$K$~+~BFS); converges} \\
+\multicolumn{6}{l}{to parity as $N$ grows because the cuBLAS \texttt{Sgemv}
+common to both becomes the dominant term.} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1006,6 +1322,7 @@ in the custom kernel path). At the AV budget of 1~ms, this leaves
 \end{enumerate}
 
 \subsection{Consumer GPU Validation: RTX 5060 Ti}
+\label{sec:consumer_validation}
 
 To evaluate deployment on edge hardware, we cross-validate on an
 RTX~5060~Ti (16~GB GDDR7, Blackwell sm\_120, CUDA~13.0) --- the class
@@ -1029,45 +1346,64 @@ Voice    &   30~Hz &  3{,}000 & 20.0~ms & 0.32 & \textbf{pass} \\
 \end{tabular}
 \end{table}
 
-The RTX~5060~Ti is 2.3--2.8$\times$ faster than the A100~PCIE across
-all benchmarks, despite costing \$449 vs.\ $\sim$\$10K. This
-counterintuitive result arises because at these small working-set sizes
-($N \leq 50$K) the kernels are launch-overhead and boost-clock bound,
-not HBM-bandwidth bound. The A100's 1.5~TB/s HBM2e advantage over
-the 5060~Ti's $\sim$448~GB/s GDDR7 is invisible when the dominant
-costs are kernel dispatch latency and SM clock frequency, both of
-which favor the consumer GPU's higher boost clocks and lower launch
-overhead. The scaling sweep also passes at all sizes through
-$N{=}50{,}000$ ($p99 = 0.90$~ms), compared to the A100~PCIE which
-fails at $N \geq 20{,}000$ against a 1~ms budget.
+The RTX~5060~Ti is 2.3--2.8$\times$ faster than the
+\emph{A100~PCIE} across all benchmarks. We highlight ``A100~PCIE'',
+not ``A100'': the 300\,W PCIe variant has lower sustained boost
+behavior than the 400\,W A100~SXM4 used in
+Sections~\ref{sec:comparison} and~\ref{sec:competitor_bench}; the
+gap to the SXM4 is smaller (and is documented in
+Section~\ref{sec:fp16scaling}, where the 5060~Ti is faster only at
+$N \le 10^5$ and the SXM4 wins at $N \ge 5 \cdot 10^5$). Three
+factors plausibly contribute to the consumer-vs-PCIe gap at small
+$N$: (i)~the 5060~Ti's higher SM boost clock under sustained load,
+(ii)~lower kernel-launch latency on the consumer driver path, and
+(iii)~the absence of the PCIe-bus contention seen on multi-tenant
+hosts. We do \emph{not} attribute the gap to a single cause without a
+controlled measurement: locked-clock and Nsight-instrumented per-stage
+breakdowns are on the roadmap. The scaling sweep also passes at all
+sizes through $N{=}50{,}000$ ($p99 = 0.90$~ms) on the 5060~Ti, while
+the A100~PCIE failed at $N \geq 20{,}000$ against a 1~ms budget
+\emph{in the pre-optimization (Round~3) pipeline} reported in
+Table~\ref{tab:scaling}; under the optimized cuBLAS+CUB pipeline
+(Section~\ref{sec:optimized_pipeline}), the same configurations pass
+at 0.54--0.56~ms. We carry both numbers because they reflect two
+real engineering states of the system, not a contradiction.
 
-\subsection{Corpus-Size Scaling}
+\subsection{Corpus-Size Scaling (Pre-Optimization)}
+\label{sec:scaling_preopt}
 
 \begin{table}[ht]
 \centering
 \small
-\caption{Scaling sweep at 60~Hz on A100~PCIE (15\,s each, 1~ms budget).}
+\caption{Scaling sweep at 60~Hz on A100~PCIE (15\,s each, 1~ms budget).
+\textbf{Important:} this table reports the \emph{Round~3} pipeline
+(custom similarity + tiled top-$K$ + device-driven BFS), \emph{not}
+the current cuBLAS+CUB pipeline. The same $N$ values pass at
+0.54--0.56~ms after the Round~4 optimizations
+(Table~\ref{tab:optimized_scaling}). We report this table to
+document the pre-optimization state and motivate
+Section~\ref{sec:optimized_pipeline}.}
 \label{tab:scaling}
 \begin{tabular}{rrrrl}
 \toprule
-\textbf{$N$} & \textbf{Wall $p99$} & \textbf{GPU $p99$} & \textbf{Miss rate} & \textbf{Verdict} \\
+\textbf{$N$} & \textbf{Wall $p99$} & \textbf{GPU $p99$} & \textbf{Miss rate} & \textbf{Verdict (Round~3)} \\
 \midrule
  1{,}000 & 0.84 & 0.67 &    0\% & \textbf{pass} \\
  5{,}000 & 0.91 & 0.70 &    0\% & \textbf{pass} \\
 10{,}000 & 0.96 & 0.75 &  0.1\% & \textbf{pass} \\
-20{,}000 & 1.59 & 1.38 &  100\% & \textbf{fail} \\
-50{,}000 & 1.69 & 1.51 &  100\% & \textbf{fail} \\
+20{,}000 & 1.59 & 1.38 &  100\% & \textbf{fail (pre-opt)} \\
+50{,}000 & 1.69 & 1.51 &  100\% & \textbf{fail (pre-opt)} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 Two scaling regimes are visible. \textbf{Sub-millisecond}
 ($N \leq 10{,}000$): GPU kernel $p99$ stays 0.67--0.75~ms; the 1~ms
-budget is met with headroom. \textbf{Compute-limited}
-($N \geq 20{,}000$): the $O(N \times D)$ similarity kernel dominates;
-GPU $p99$ reaches 1.38~ms at $N{=}20$K. FP16 or approximate
-pre-filtering would be required to maintain the 1~ms budget at these
-sizes.
+budget is met with headroom even in the Round~3 pipeline.
+\textbf{Compute-limited} ($N \geq 20{,}000$): the $\Theta(N \times D)$
+similarity kernel dominates; the Round~3 pipeline crossed the 1~ms
+deadline. The Round~4 cuBLAS+CUB pipeline (next subsection) recovers
+this regime.
 
 \subsection{Large-Corpus Scaling: FP16}
 \label{sec:fp16scaling}
@@ -1095,15 +1431,22 @@ Wall-clock $p99$ on RTX~5060~Ti and A100~SXM4.}
 \end{tabular}
 \end{table}
 
-At 1M memories, the RTX~5060~Ti (\$449) achieves 6.51~ms $p99$,
-outperforming the A100~SXM4 (\$15K) at 7.70~ms. At 500K+, the A100's
-2~TB/s HBM bandwidth provides an advantage (2.51~ms vs.\ 3.53~ms), but
-at 1M the 5060~Ti's lower kernel-launch overhead and higher boost
-clocks overcome the bandwidth gap (the non-monotonic flip between
-500K and 1M may also reflect variance; these are single-run $p99$
-over 100--300 queries per configuration). FP16 halves VRAM,
-enabling approximately 5M memories on the 16~GB RTX~5060~Ti --- well
-beyond any single-session working set for the target workloads.
+At $N{=}10^5$ the RTX~5060~Ti (consumer, ${\sim}\$$449) trails the
+A100~SXM4 (datacenter, retail-list ${\sim}\$$10\,K and up depending
+on form factor) by $20\,$\%; at 500\,K the A100's 2.0~TB/s HBM
+advantage opens a $\sim$1\,ms gap (2.51~ms vs.\ 3.53~ms); at 1\,M
+the picture flips back, with the 5060~Ti at 6.51~ms vs.\ A100~SXM4
+at 7.70~ms. We caution against reading the 1\,M flip as a robust
+result: it is a single-run $p99$ over 100--300 queries (see
+Section~\ref{sec:methodology} on $p99$ stability) and the absolute
+gap (1.2~ms) is comparable to the unconstrained-boost noise envelope
+on both cards. The honest interpretation is that consumer Blackwell
+and datacenter A100 are within $\sim$50\,\% of each other on this
+workload up to multi-million-vector $N$, which is the practically
+relevant claim for ``can I deploy an embodied retrieval substrate on
+prosumer hardware?''. FP16 halves VRAM, enabling approximately 5\,M
+memories on the 16~GB RTX~5060~Ti --- well beyond any single-session
+working set for the target workloads.
 
 \subsection{Optimized Pipeline: cuBLAS + CUB + Kernel Fusion}
 \label{sec:optimized_pipeline}
@@ -1192,6 +1535,35 @@ episode's CSR member range and BFS depth is set to zero. The work
 collapses from $\Theta(N \cdot D)$ to $\Theta(|\text{episode}| \cdot
 D)$ and the cross-episode distractors that limit recall on the
 multimodal kids-ball metric are eliminated by construction.
+
+\paragraph{Honest caveat: the algorithmic move is small, the API
+move is the contribution.} Restricting an SGEMV to the membership
+of a labelled subset is mechanically a one-line change to the
+kernel call (offset and length on $E$ and the bookkeeping on
+\texttt{score}/\texttt{visited}). We make no claim that this
+algorithm itself is novel; the contribution is exposing it as a
+\emph{first-class kernel-level retrieval contract} that composes
+cleanly with the temporal-decay epilogue and the cross-modal BFS,
+sharing a single device-resident graph and a single
+\texttt{QueryContext}. The empirical justification is that the
+alternative --- an unfiltered cosine ANN sweep followed by host-side
+episode filtering --- breaks recall at scale on small multimodal
+clusters (Section~\ref{sec:competitor_bench}, finding~2).
+
+\paragraph{Synthetic-corpus disclaimer.} The kids-ball corpus is
+generated synthetically: each episode is a 10-node cluster of
+correlated embeddings (one IMAGE, three AUDIO, six TEXT), with
+within-episode cosine $> 0.85$ and across-episode cosine
+$\sim 0.2{-}0.4$ in the shared 768-D space. The generator is
+documented in \texttt{scripts/build\_kids\_ball\_corpus.py}. This
+construction makes the recall axis well-posed (we know the ground
+truth multimodal cluster) but is \emph{not} a substitute for a
+real-encoder evaluation. A run with CLIP+CLAP+E5 outputs over a
+labelled cross-modal dataset (e.g.\ AudioCaps~+~COCO,
+MSR-VTT) is queued (Section~\ref{sec:future-work}); we expect the
+\emph{episode}-axis findings to carry over qualitatively because
+the failure mode of cosine ANN on small clusters embedded in a
+million distractors is structural, not a property of the encoder.
 
 We validated this on the embodied ``kids playing with a ball'' scene
 (Section~\ref{sec:demos}) with a paired-probes harness: every
@@ -1285,7 +1657,7 @@ extremely sensitive to whether variants share the random sample.
 \subsection{Head-to-Head Against Modern GPU ANN Libraries}
 \label{sec:competitor_bench}
 
-Section~\ref{sec:related_work} positioned \mars{} as a complementary
+Section~\ref{sec:related} positioned \mars{} as a complementary
 substrate to GPU vector-search libraries. We now make that
 positioning empirical: we compare the embodied multimodal contract
 (IMAGE query $\to$ same-episode TEXT~+~AUDIO in top-15) head-to-head
@@ -1306,6 +1678,27 @@ $n_{\text{probe}}=64$. (iii) cuVS CAGRA 26.04 (graph-based ANN with
 batch-1 latency; this version exposes the
 \texttt{cagra::extend()} streaming op).
 
+\paragraph{What \emph{would} be a fairer baseline (and why we don't
+report it as such).} A reader familiar with FAISS will rightly note
+that \texttt{IndexFlatIP} (and CAGRA's filtered-search API) supports
+metadata pre-filtering via \texttt{IDSelectorBatch} or
+\texttt{IDSelectorRange}, which is the natural way to encode
+``restrict to this episode's member range.'' We have prototyped this
+on FAISS-Flat-GPU and the latency lands within $1.3\times$ of
+\mars{} Episode-scoped at $N{=}10^6$ (the residual gap is mostly the
+selector materialisation cost; the underlying kernel is the same
+restricted SGEMV). \emph{This is the right reading of the table
+below}: the recall-at-scale collapse of unfiltered IVF/CAGRA is what
+breaks if the application does not provide an ID filter; conversely,
+\emph{if} it does, FAISS+IDSelector is a competitive alternative on
+the latency axis. \mars{}'s contribution is consolidating ``episode
+filter + temporal decay + cross-modal BFS + streaming append'' into
+one kernel API, not single-purpose latency wins over FAISS+IDSelector
+for the episode-only case. We retain the unfiltered FAISS/CAGRA rows
+in the table because they are the configurations actually used in
+production embodied stacks today; a head-to-head with IDSelector is
+queued for the next iteration.
+
 \begin{table*}[ht]
 \centering
 \small
@@ -1316,7 +1709,10 @@ $N{\le}10^5$, 128 probes at $N{=}10^6$. \mars{} numbers from
 \texttt{step\_global\_boost\_0.json} and
 \texttt{step\_episode\_scoped.json}; FAISS / CAGRA numbers from
 \texttt{scripts/bench\_kids\_ball\_\{faiss,cuvs\_cagra\}.py}.
-\textbf{Bold} = Pareto-optimal at that $N$.}
+\textbf{Bold} = on the latency--recall Pareto frontier at that $N$
+(maximises \texttt{hit@15} for its latency or minimises latency for
+its \texttt{hit@15}). Multiple bold cells in the same column are
+non-dominated by any other row at that $N$.}
 \label{tab:competitor_bench}
 \begin{tabular}{lrrrrrr}
 \toprule
@@ -1327,7 +1723,7 @@ $N{\le}10^5$, 128 probes at $N{=}10^6$. \mars{} numbers from
 \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
  & $p99$ (ms) & hit@15 & $p99$ (ms) & hit@15 & $p99$ (ms) & hit@15 \\
 \midrule
-FAISS Flat (exhaustive)         & 0.179 & \textbf{1.000} & 0.779 & \textbf{1.000} & 6.642 & \textbf{1.000} \\
+FAISS Flat (exhaustive)         & 0.179 & \textbf{1.000} & \textbf{0.779} & \textbf{1.000} & 6.642 & \textbf{1.000} \\
 FAISS IVF ($n_{\text{probe}}{=}64$) & 0.448 & 0.520 & 0.601 & 0.371 & 1.424 & 0.000 \\
 cuVS CAGRA (\texttt{graph\_degree}=64) & 3.319 & 1.000 & 3.233 & 0.008 & 3.251 & 0.000 \\
 \midrule
@@ -1712,12 +2108,58 @@ contribution to retrieval quality. This feature is included in the
 system design and API but should be validated with task-specific
 downstream metrics before being claimed as a primary contribution.
 
-\subsection{Future Work}
+% ══════════════════════════════════════════════════════════════════════
+\section{Future Work}
 \label{sec:future-work}
 
-Six extensions are under active development on feature branches:
+We group future work into two tracks: \emph{evaluation hardening}
+(addressing the methodological caveats of
+Section~\ref{sec:methodology}) and \emph{system extensions}.
+
+\subsection*{Evaluation Hardening}
 
 \begin{enumerate}
+\item \textbf{Locked-clock, dedicated-hardware re-runs.} All current
+  $p99$ numbers are taken at unconstrained boost on rented
+  (vast.ai) instances with $\sim$100--300 queries per configuration.
+  We will re-run on dedicated hardware with
+  \texttt{nvidia-smi -lgc}, $\geq$10\,K queries per configuration,
+  bootstrap 95\,\% confidence intervals on every reported $p99$, and
+  Nsight Systems / Nsight Compute traces for per-stage breakdowns.
+  This will resolve open questions about the FP16 500K-vs-1M
+  non-monotonicity (Table~\ref{tab:large_scaling}) and the consumer-vs-PCIe
+  attribution (Section~\ref{sec:consumer_validation}).
+
+\item \textbf{Real-encoder cross-modal benchmark.} Re-run the
+  multimodal contract of Section~\ref{sec:competitor_bench} on actual
+  encoder outputs (CLIP / SigLIP / CLAP / E5) over labelled
+  cross-modal datasets (AudioCaps, MSR-VTT, EgoSchema, ActivityNet).
+  This will turn the \emph{structural} cross-modal claim into a
+  \emph{semantic} cross-modal claim and replace the synthetic
+  kids-ball corpus as the headline benchmark.
+
+\item \textbf{Filtered-ANN head-to-head.} Add FAISS-Flat-GPU with
+  \texttt{IDSelectorBatch} / \texttt{IDSelectorRange} and CAGRA
+  with the filtered-search API as direct comparators to \mars{}
+  Episode-scoped on the same kids-ball contract. Initial prototyping
+  suggests FAISS+IDSelector lands within $\sim$1.3$\times$ of
+  \mars{} Episode-scoped at $N{=}10^6$; we will report the full
+  curve.
+
+\item \textbf{Standard temporal-IR metrics.} Cross-evaluate against
+  NDCG-with-temporal-decay and MAP@K-with-time, in addition to our
+  \emph{Temporal Precision@K} (Definition~\ref{def:temporal_relevance}),
+  to align with the temporal-IR literature.
+
+\item \textbf{HNSW (CPU) baseline.} Add HNSW~\cite{hnsw} to the
+  Section~\ref{sec:comparison} comparison as the
+  production-incumbent CPU ANN baseline.
+\end{enumerate}
+
+\subsection*{System Extensions}
+
+\begin{enumerate}
+\setcounter{enumi}{5}
 \item \textbf{Binary persistence.} Checkpoint/restore of the full
   memory graph (CSR topology, embeddings, metadata) to disk via a
   compact binary format with FNV-1a integrity checksums. Enables warm
@@ -1728,12 +2170,13 @@ Six extensions are under active development on feature branches:
   accessors. Host-only bindings work without a GPU; CUDA bindings
   (retrieval, streaming insertion) require nvcc.
 
-\item \textbf{Streaming insertion API.} A pre-allocated ring buffer
-  that accumulates incoming nodes and batch-commits them to the CSR
-  graph with incremental NSN edge construction. Eliminates per-node
-  \texttt{cudaMalloc} and full graph rebuilds, directly addressing the
-  dynamic memory allocation overhead identified in prior work on GPU
-  memory management for safety-critical systems~\cite{calderon2024xerozerox}.
+\item \textbf{Streaming insertion API hardening.} A pre-allocated
+  ring buffer that accumulates incoming nodes and batch-commits them
+  to the CSR graph with incremental NSN edge construction. Eliminates
+  per-node \texttt{cudaMalloc} and full graph rebuilds, directly
+  addressing the dynamic memory allocation overhead identified in
+  prior work on GPU memory management for safety-critical
+  systems~\cite{calderon2024xerozerox}.
 
 \item \textbf{Deterministic VRAM budget.} A pre-flight calculator that
   computes the exact worst-case GPU memory footprint for a given
@@ -1748,6 +2191,13 @@ Six extensions are under active development on feature branches:
   launch overhead ($\sim$5--15~$\mu$s per launch $\times$ 4 kernels).
   Infrastructure (capture, replay, invalidation, parameter-change
   detection) is implemented; hardware validation is pending.
+
+\item \textbf{CUTLASS GEMV with epilogue fusion.} Replace the
+  cuBLAS+separate-decay path with a CUTLASS GEMV whose epilogue
+  applies the temporal-decay multiplication in register before the
+  store, recovering the $\sim$8\,$\mu$s pass-fusion saving without
+  giving up cuBLAS's per-architecture tile heuristics
+  (Section~\ref{sec:cuda_impl}).
 
 \item \textbf{Tensor-core similarity.} A WMMA (Warp Matrix
   Multiply-Accumulate) kernel using \texttt{nvcuda::wmma} for
@@ -1776,6 +2226,12 @@ Six extensions are under active development on feature branches:
   ${\sim}80$~$\mu$s host floor visible in the smaller-$N$
   measurements.
 
+\item \textbf{Warp-aggregated BFS atomics.} For workloads that push
+  the BFS frontier beyond the current $K \cdot \bar{d} \le 200$
+  regime (e.g.\ $K{>}256$ or BFS depth $h{>}3$), replace the scalar
+  \texttt{atomicCAS} on \texttt{visited} with the warp-aggregated
+  pattern of Merrill et al.~\cite{merrill2012}.
+
 \item \textbf{Multi-memory framework integration.} Embodied agent
   frameworks such as RoboMemory~\cite{robomemory},
   MEM~\cite{mem_pi06}, and EgoMem~\cite{egomem} use distinct
@@ -1785,44 +2241,61 @@ Six extensions are under active development on feature branches:
   layer would expose \mars{} as a single sub-millisecond GPU
   substrate for these multi-memory APIs, replacing the multi-stage
   host code these systems currently use.
+
+\item \textbf{Multi-stream and MIG sharing.} A real perception stack
+  shares the GPU between sensor ingest, retrieval, and downstream
+  policy. We will measure \mars{} latency under stream-priority
+  contention and under MIG partitioning (1g.10gb, 2g.20gb, 3g.40gb
+  on the A100) to characterise multi-tenant deployability.
 \end{enumerate}
 
 % ══════════════════════════════════════════════════════════════════════
 \section{Conclusion}
 
-GPU vector search libraries require a post-hoc temporal filter to
-produce time-aware rankings on streaming data. We showed that a
-three-way comparison --- FAISS cosine-only (0.13~ms), FAISS with
-post-hoc filter (0.25~ms, TP@10 = 0.910), and \mars{} with native
-temporal decay (0.26~ms, TP@10 = 0.910) --- demonstrates that \mars{}
-achieves the same temporal precision as the two-stage FAISS pipeline at
-essentially identical latency, while eliminating the application-level
-filter code. All four
+The empirical centrepiece of this paper is that
+\textbf{episode-scoped retrieval, exposed as a kernel-level GPU
+primitive}, delivers \textbf{197~$\mu$s $p99$ at $N{=}10^6$} on the
+embodied multimodal kids-ball contract, $33\times$ faster than the
+only baseline that retains \texttt{hit@15}=1.0 at that scale
+(FAISS-Flat-GPU, exhaustive cosine), and is the only configuration
+in our head-to-head that simultaneously stays under the 1~ms AV
+deadline and at perfect cross-modal recall across three decades of
+$N$. The recall axis is the more important one: cosine-only GPU ANN
+baselines (FAISS-IVF, cuVS CAGRA) drop \texttt{hit@15} to $\le 0.4$
+at $N{=}10^5$ and to $0$ at $N{=}10^6$, not because their parameters
+are wrong but because the per-episode multimodal cluster is invisible
+to a kernel that does not know about episodes. The
+algorithmic move (restrict the SGEMV to a labelled member range) is
+small; the contribution is consolidating it with temporal decay,
+cross-modal BFS, and streaming append into one device-resident API.
+
+Native temporal decay matches a two-stage FAISS-with-post-hoc-filter
+pipeline at identical TP@10=0.910 (0.26~ms vs.\ 0.25~ms $p99$ ---
+within run-to-run variance under unconstrained boost). The
+contribution here is API consolidation, not raw speed. All four
 demonstrator deadlines are met on both datacenter (A100) and consumer
-(RTX~5060~Ti) GPUs, with zero deadline misses in sustained 30-second
-runs. The FP16 extension scales to 1M memories at
-6.5~ms $p99$ on a \$449 consumer GPU.
+(RTX~5060~Ti) GPUs with zero deadline misses in sustained 30-second
+runs, and the FP16 extension scales to 1\,M memories at 6.5~ms $p99$
+on a sub-\$500 consumer GPU.
 
-The ablation study provides an honest assessment: at the target corpus
-sizes ($N \leq 50$K), \mars{}'s primary contributions are temporal
-decay integration and streaming freshness, not the graph topology.
-The NSN's cross-modal bridges improve structural cross-modal diversity
-(0.50 $\to$ 0.80 at $N{=}50$K) --- though we note this measures
-structural reachability, not semantic relevance, and a semantic
-evaluation remains future work. Within-modality recall is driven
-by brute-force similarity. This is the right design for bounded working
-sets; sublinear indexing would be needed for corpora above 100K.
+The ablation provides an honest assessment of the rest of the design:
+at the target $N \le 50$K, \emph{within-modality} recall is driven
+entirely by brute-force similarity plus temporal decay --- the NSN
+graph contributes \emph{structural} cross-modal reachability (0.50
+$\to$ 0.80 at $N{=}50$K), not within-modality recall. A semantic
+cross-modal evaluation with real encoders, locked-clock latency
+re-runs, and a head-to-head against FAISS+IDSelector are queued
+(Section~\ref{sec:future-work}).
 
-\mars{} fills a specific gap in the retrieval landscape: between the
-fast-but-stateless circular buffers used in production robotics and
-autonomy, and the capable-but-slow vector databases used in
-conversational AI. For the bounded working sets of real-time perception
---- seconds to hours of streaming sensor data that fit comfortably in
-GPU HBM --- a GPU-resident substrate with native temporal awareness and
-cross-modal support is the right abstraction.
+\mars{} fills a specific gap: between the fast-but-stateless circular
+buffers used in production robotics and autonomy, and the
+capable-but-slow vector databases used in conversational AI. The
+abstraction shift is to treat \emph{ranking} (scope, time, modality)
+as a kernel-level primitive rather than as host-side post-processing
+over an ANN top-$K'$.
 
-The source code, demonstrators, benchmark harness, and raw results are
-available at \url{https://github.com/antonellof/MARS}.
+The source code, demonstrators, benchmark harness, and raw results
+are available at \url{https://github.com/antonellof/MARS}.
 
 % ══════════════════════════════════════════════════════════════════════
 \bibliographystyle{plain}

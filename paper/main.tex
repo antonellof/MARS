@@ -135,15 +135,19 @@ Table~\ref{tab:hwindex}):
 \begin{itemize}
 \setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}
 \item \textbf{Episode-scoped retrieval} delivers \textbf{197~$\mu$s
-  $p99$ at $N{=}1$~M} on the embodied kids-ball multimodal contract,
-  while keeping perfect cross-modal hit@15. This is $33\times$ faster
-  than the only other system that retains hit@15${=}1.0$ at that
-  scale (FAISS-Flat-GPU, 6.64~ms) and the only configuration that
-  stays under the 1~ms AV deadline at $N{=}10^6$.
+  $p99$ at $N{=}1$~M} on a synthetic embodied multimodal benchmark
+  (10-node cross-modal episodes of one IMAGE, three AUDIO and six
+  TEXT vectors; image query $\to$ same-episode text+audio; full
+  setup in \S\ref{sec:competitor_bench}), while keeping perfect
+  cross-modal hit@15. This is $33\times$ faster than the only other
+  system that retains hit@15${=}1.0$ at that scale (FAISS-Flat-GPU,
+  6.64~ms) and the only configuration that stays under the 1~ms AV
+  deadline at $N{=}10^6$.
 \item Cosine-only GPU ANN baselines (FAISS-IVF, cuVS CAGRA) lose
-  hit@15 on the multimodal contract as $N$ grows ($\le 0.4$ at
-  $N{=}10^5$, $0$ at $N{=}10^6$). The dominant signal at scale is not
-  ANN parameters but \emph{whether} the kernel sees episode membership.
+  hit@15 on this same benchmark as $N$ grows ($\le 0.4$ at
+  $N{=}10^5$, $0$ at $N{=}10^6$). The dominant signal at scale is
+  not ANN parameters but \emph{whether} the kernel sees episode
+  membership.
 \item Native temporal decay matches a two-stage FAISS-with-post-hoc
   filter pipeline at the same TP@10${=}0.910$ in AV perception
   (0.26~ms vs.\ 0.25~ms $p99$). The contribution here is API
@@ -186,6 +190,17 @@ week's drive through a schoolyard has high audio similarity but is
 useless. The useful memory is 600~ms old, from a different modality
 than the query, and low in cosine similarity compared to countless
 irrelevant-but-similar alternatives in the corpus.
+
+We use this scene as the paper's running example and refer to it
+throughout as the \emph{kids-ball benchmark}: a synthetic
+multimodal corpus of 10-node cross-modal episodes (one IMAGE,
+three AUDIO, six TEXT vectors per episode; within-episode cosine
+$> 0.85$, across-episode $\sim$0.2--0.4 in a shared 768-D space)
+queried with an IMAGE probe whose ground-truth answer is the
+same-episode TEXT+AUDIO neighbours. The full generator and probe
+contract are described in \S\ref{sec:competitor_bench}; we surface
+the name here so every later headline number can be read against
+this single, fixed contract.
 
 Two things are true at once for the embodied perception stack and
 both are missed by a pure cosine-only ANN sweep:
@@ -240,7 +255,7 @@ the conventional cosine sweep over $V$. When the scope is
 \texttt{EpisodeScoped(id)}, Stage~1 is restricted to the CSR member
 range of that episode and BFS depth is set to zero. The work
 collapses from $\Theta(N \cdot D)$ to $\Theta(|\textnormal{episode}|
-\cdot D)$, which on the embodied kids-ball benchmark
+\cdot D)$, which on the kids-ball benchmark just defined
 (Section~\ref{sec:competitor_bench}) lands at \textbf{197~$\mu$s
 $p99$} independent of $N$ across three decades. \emph{This is the
 empirical centrepiece of the paper.}

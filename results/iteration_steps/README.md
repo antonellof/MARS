@@ -88,3 +88,5 @@ Re-run the full multi-N sweep when you change defaults:
 | [vast_a100_refine2_latency](vast_a100_refine2_latency/) | A100-SXM4-40GB | Same grid, `--iterate-wall-ms-penalty 1.0`: best still **0.24**. |
 | [vast_a100_refine3](vast_a100_refine3/) | A100-SXM4-40GB | Micro 0.23–0.26 incl. **0.25**: **0.24** wins composite; demo default **0.24**. |
 | [vast_a100_1m_micro_20260415](vast_a100_1m_micro_20260415/) | A100-SXM4-40GB | **N=1M**, same micro grid, **128** probes/boost: best **0.245** (scale/probe variance vs 10k); wall p99 ~**2.5 ms** global. |
+| [vast_a100_ssh5_20260417_10k](vast_a100_ssh5_20260417_10k/) | A100-SXM4-40GB (CUDA 12.6, Ubuntu 24.04) | Reconfirmation 10k micro grid: best **0.240** (composite **2.7266**). |
+| [vast_a100_ssh5_20260417_1m](vast_a100_ssh5_20260417_1m/) | A100-SXM4-40GB (CUDA 12.6, Ubuntu 24.04) | Reconfirmation 1M micro grid: best **0.245** (composite **2.7656**). |

@@ -1,0 +1,153 @@
+{
+  "tool": "mars-kids-ball-sweep",
+  "version": "1.2",
+  "note": "Multiple retrieval variants per N for vast.ai matrix. episode_scoped = similarity+decay over episode members only, BFS hops 0. global_episode_boost = same-episode score multiplier before top-K. See docs/MEMORY_LAYOUT_EMBODIED.md, TEMPORAL_HIERARCHY.md, MULTIMODAL_ROUTING.md.",
+  "embedding_dim": 768,
+  "top_k": 15,
+  "max_results_returned": 96,
+  "num_probes_per_n": 256,
+  "corpus_seed": 2026,
+  "variants": [
+    {
+      "name": "global_baseline",
+      "retrieval_scope": "global",
+      "episode_same_boost": 0.0000,
+      "configurations": [
+        {
+          "N": 1000,
+          "build_ms": 14.753,
+          "wall_p99_ms": 0.1801,
+          "kernel_p99_ms": 0.0963,
+          "episode_cross_modal_hit_rate_compact": 0.9883,
+          "episode_cross_modal_hit_rate_top15": 0.8008
+        },
+        {
+          "N": 5000,
+          "build_ms": 74.902,
+          "wall_p99_ms": 0.2709,
+          "kernel_p99_ms": 0.1679,
+          "episode_cross_modal_hit_rate_compact": 0.9922,
+          "episode_cross_modal_hit_rate_top15": 0.8086
+        },
+        {
+          "N": 10000,
+          "build_ms": 148.723,
+          "wall_p99_ms": 0.2562,
+          "kernel_p99_ms": 0.1536,
+          "episode_cross_modal_hit_rate_compact": 0.9844,
+          "episode_cross_modal_hit_rate_top15": 0.8164
+        },
+        {
+          "N": 20000,
+          "build_ms": 302.080,
+          "wall_p99_ms": 0.2966,
+          "kernel_p99_ms": 0.1894,
+          "episode_cross_modal_hit_rate_compact": 0.9883,
+          "episode_cross_modal_hit_rate_top15": 0.8359
+        },
+        {
+          "N": 50000,
+          "build_ms": 761.553,
+          "wall_p99_ms": 0.3467,
+          "kernel_p99_ms": 0.2499,
+          "episode_cross_modal_hit_rate_compact": 0.9883,
+          "episode_cross_modal_hit_rate_top15": 0.8516
+        }
+      ]
+    },
+    {
+      "name": "global_episode_boost_0.24",
+      "retrieval_scope": "global",
+      "episode_same_boost": 0.2400,
+      "configurations": [
+        {
+          "N": 1000,
+          "build_ms": 14.753,
+          "wall_p99_ms": 0.1805,
+          "kernel_p99_ms": 0.0973,
+          "episode_cross_modal_hit_rate_compact": 0.9844,
+          "episode_cross_modal_hit_rate_top15": 0.7852
+        },
+        {
+          "N": 5000,
+          "build_ms": 74.902,
+          "wall_p99_ms": 0.2707,
+          "kernel_p99_ms": 0.1669,
+          "episode_cross_modal_hit_rate_compact": 0.9805,
+          "episode_cross_modal_hit_rate_top15": 0.8438
+        },
+        {
+          "N": 10000,
+          "build_ms": 148.723,
+          "wall_p99_ms": 0.2645,
+          "kernel_p99_ms": 0.1536,
+          "episode_cross_modal_hit_rate_compact": 0.9844,
+          "episode_cross_modal_hit_rate_top15": 0.7773
+        },
+        {
+          "N": 20000,
+          "build_ms": 302.080,
+          "wall_p99_ms": 0.2996,
+          "kernel_p99_ms": 0.1894,
+          "episode_cross_modal_hit_rate_compact": 0.9648,
+          "episode_cross_modal_hit_rate_top15": 0.7852
+        },
+        {
+          "N": 50000,
+          "build_ms": 761.553,
+          "wall_p99_ms": 0.3647,
+          "kernel_p99_ms": 0.2550,
+          "episode_cross_modal_hit_rate_compact": 0.9688,
+          "episode_cross_modal_hit_rate_top15": 0.8398
+        }
+      ]
+    },
+    {
+      "name": "episode_scoped_no_bfs",
+      "retrieval_scope": "episode_scoped",
+      "episode_same_boost": 0.0000,
+      "configurations": [
+        {
+          "N": 1000,
+          "build_ms": 14.753,
+          "wall_p99_ms": 0.1180,
+          "kernel_p99_ms": 0.0717,
+          "episode_cross_modal_hit_rate_compact": 1.0000,
+          "episode_cross_modal_hit_rate_top15": 1.0000
+        },
+        {
+          "N": 5000,
+          "build_ms": 74.902,
+          "wall_p99_ms": 0.1828,
+          "kernel_p99_ms": 0.1362,
+          "episode_cross_modal_hit_rate_compact": 1.0000,
+          "episode_cross_modal_hit_rate_top15": 1.0000
+        },
+        {
+          "N": 10000,
+          "build_ms": 148.723,
+          "wall_p99_ms": 0.1613,
+          "kernel_p99_ms": 0.1126,
+          "episode_cross_modal_hit_rate_compact": 1.0000,
+          "episode_cross_modal_hit_rate_top15": 1.0000
+        },
+        {
+          "N": 20000,
+          "build_ms": 302.080,
+          "wall_p99_ms": 0.1631,
+          "kernel_p99_ms": 0.1167,
+          "episode_cross_modal_hit_rate_compact": 1.0000,
+          "episode_cross_modal_hit_rate_top15": 1.0000
+        },
+        {
+          "N": 50000,
+          "build_ms": 761.553,
+          "wall_p99_ms": 0.1628,
+          "kernel_p99_ms": 0.1178,
+          "episode_cross_modal_hit_rate_compact": 1.0000,
+          "episode_cross_modal_hit_rate_top15": 1.0000
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "host": "ssh5.vast.ai",
+  "ssh_port": 19293,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "driver": "565.57.01",
+  "cuda_runtime": "12.6",
+  "os": "Ubuntu 24.04.4 LTS",
+  "iterate_n": 1000000,
+  "iterate_probes": 128,
+  "boost_grid": "0.23,0.24,0.245,0.25,0.255,0.26",
+  "iterate_wall_ms_penalty": 0.0,
+  "git_commit": "3b04e1ca851466429d4840152a548bb04b6a51eb",
+  "steps_dir_remote": "results/iteration_steps/make_refine_micro_1m",
+  "best_global_episode_same_boost": 0.245,
+  "note": "Reconfirmation run on a fresh A100 instance; reproduces vast_a100_1m_micro_20260415 (best 0.245). Wall p99 ~2.49 ms global."
+}

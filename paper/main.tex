@@ -505,10 +505,18 @@ constant independent of corpus size $N$
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=\columnwidth]{figures/tikz_pipeline.pdf}
-\caption{Per-stage timing at $N{=}10$K on A100 SXM4. ``SGEMV +
-  Temporal Decay'' shows the combined time of the cuBLAS SGEMV kernel
-  and the separate temporal decay kernel (0.25~ms combined); total
-  wall-clock is 0.44~ms.}
+\caption{The two retrieval contracts share a single GPU-resident memory
+  graph. \textbf{Top row (Global path)} runs three kernels plus
+  cross-modal BFS: cuBLAS SGEMV with separate temporal-decay kernel
+  (0.27~ms FP32 default, 0.16~ms with the opt-in \texttt{--use-fp16}
+  hand-fused kernel; see \S\ref{sec:fp16scaling}), CUB radix sort
+  top-$K$ (0.02~ms), and warp-cooperative BFS (0.04~ms) --- 0.44~ms
+  total wall-clock at $N{=}10$K. \textbf{Bottom row (Episode-scoped
+  fast path, \S\ref{sec:episode_scoped})} restricts Stage~1 to the
+  $\sim 10$ members of the supplied episode and skips BFS entirely;
+  the result is near-flat at $\sim 0.20$~ms across $N{=}10^4$ to
+  $N{=}10^6$ and $33\times$ faster than FAISS-Flat-GPU at $N{=}1$M
+  on the kids-ball multimodal contract (\S\ref{sec:competitor_bench}).}
 \label{fig:kernel_pipeline}
 \end{figure}
 

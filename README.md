@@ -1,7 +1,7 @@
 # MARS: Memory for Autonomous Real-Time Systems
 
-A GPU-resident retrieval substrate with native temporal decay
-for real-time embodied AI.
+**Episode-scoped GPU retrieval for real-time embodied AI**, with
+native temporal decay and cross-modal bridges.
 
 [![CUDA](https://img.shields.io/badge/CUDA-11.8%2B-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-downloads)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)](https://isocpp.org/)
@@ -21,23 +21,61 @@ the prior that a child may follow. The useful memory is 600 ms old,
 from a different modality, and low in cosine similarity compared to
 irrelevant alternatives. No ranking by similarity alone can surface it.
 
-Existing GPU vector search libraries (FAISS, cuVS) rank by cosine
-similarity alone. A post-hoc temporal filter fixes temporal ranking,
-but adds a second pipeline stage. MARS integrates temporal decay
-natively into the GPU retrieval path — matching FAISS+filter precision
-(0.910) at identical latency (0.26 vs 0.25 ms), without the filter.
+Embodied perception stacks already know more than "find me the
+nearest vector." They carry an active **track id**, a **dialogue
+session**, an **AR room**, or a **robot sub-task** — the right answer
+almost always lives inside that *episode*. Existing GPU vector search
+libraries (FAISS, cuVS) expose only the global cosine contract, so
+applications post-filter the top-K' on the host. We show that this
+breaks recall at scale: at N=1M with 10-node multimodal episodes,
+both FAISS-IVF and cuVS CAGRA collapse to `hit@15 ≤ 0.4` because the
+per-episode TEXT/AUDIO neighbors are buried among ~999 990 distractors.
 
-| Gap | Without MARS | With MARS |
-|-----|-------------|-----------|
-| **Temporal awareness** | Post-hoc filter needed (two-stage) | Native in retrieval path |
-| **Streaming insertion** | Rebuild every N seconds | Immediately queryable |
-| **Cross-modal retrieval** | Application-level join | Graph bridges via BFS |
+MARS treats **scope, time, and cross-modal connectivity** as
+first-class kernel-level controls rather than as host-side
+post-processing.
+
+| Signal | Without MARS | With MARS |
+|--------|--------------|-----------|
+| **Episode scope** | Host post-filter on global top-K' (loses recall at N≥10⁵) | `RetrievalScope::EpisodeScoped` restricts Stage 1 to episode CSR member range |
+| **Temporal decay** | Two-stage pipeline (cosine + filter) | Folded into the score before top-K |
+| **Cross-modal retrieval** | Application-level join | NSN graph bridges via warp-cooperative BFS |
+| **Streaming insertion** | Rebuild every N seconds | CSR append + incremental NSN edges, immediately queryable |
 
 ---
 
 ## Key results
 
-Measured on **A100 SXM4 40GB** (D=768, K=10, cuBLAS+CUB):
+### Headline: episode-scoped retrieval is near-flat at sub-200 µs
+
+When the application supplies `query_episode_id` (embodied loop, AV
+per-track memory, voice/AR session), Stage 1 is restricted to the
+episode CSR member range and BFS is skipped. The work collapses from
+Θ(N·D) to Θ(|episode|·D), and on a single A100 SXM4 40 GB this lands
+near-flat at ~200 µs across three decades of N at **perfect
+cross-modal recall** on the kids-ball multimodal contract:
+
+| N | Global p99 | **Episode-scoped p99** | Speedup | Episode hit@15 |
+|---|-----------:|-----------------------:|:-------:|---------------:|
+| 10K  | 0.349 ms | **0.165 ms** | 2.1× | 0.83 → **1.00** |
+| 50K  | 0.462 ms | **0.172 ms** | 2.7× | 0.88 → **1.00** |
+| 100K | 0.551 ms | **0.174 ms** | 3.2× | 0.79 → **1.00** |
+| 1M   | 2.561 ms | **0.197 ms** | **13×** | 0.84 → **1.00** |
+
+This is **the only configuration in our sweep that meets the 1 ms AV
+deadline at N=10⁶**. See `results/iteration_steps/vast_a100_paired_20260417/`
+for the paired-RNG probes and §6.8 of the paper for the theoretical
+crossover analysis.
+
+> **Honest caveat.** Episode-scoped is correct only when the right
+> episode is known *before* the query. It does not solve cross-episode
+> retrieval — that is what the global path with NSN bridges and
+> temporal decay exists for. Both paths are exposed via
+> `--scope=episode|global`.
+
+### Global-path scaling (cuBLAS+CUB, FP32)
+
+Measured on **A100 SXM4 40GB** (D=768, K=10):
 
 | Corpus | p99 | Status | VRAM |
 |--------|-----|--------|------|
@@ -49,8 +87,8 @@ Measured on **A100 SXM4 40GB** (D=768, K=10, cuBLAS+CUB):
 | 10M | **22.3 ms** | PASS | 30 GB |
 | **13M** | **29.1 ms** | PASS | **40 GB (max)** |
 
-All corpus sizes up to 50K pass the **1 ms AV perception deadline** with zero misses.
-13M memories (maxing 40GB VRAM) at 29 ms.
+All corpus sizes up to 50K pass the **1 ms AV perception deadline**
+with zero misses. 13M memories (maxing 40GB VRAM) at 29 ms p99.
 
 **Out-of-core tiled retrieval** (embeddings in host RAM, streamed through GPU):
 
@@ -87,21 +125,25 @@ artefacts in `results/competitors_20260417/`.*
 
 Two findings drove the design (read [`SUMMARY.md`](results/competitors_20260417/SUMMARY.md) for the full trace):
 
-- **MARS Episode-scoped is Pareto-dominant** at every N: 34× faster than FAISS Flat at 1M, and 16× faster than CAGRA — both at perfect recall.
-- **Cosine ANN baselines collapse on this metric at scale**: the kids-ball corpus has tiny clusters (10 nodes per episode, 100 K episodes at 1M), so per-episode TEXT/AUDIO are buried among ~999 990 distractors. CAGRA's graph traversal (even at search_k=512) and IVF cells (any nprobe) miss them. MARS keeps episode membership in the graph topology and recovers them in O(member_count).
+- **MARS Episode-scoped is Pareto-optimal on the latency–recall frontier** at every N: 33× faster than FAISS Flat at 1M, 16× faster than cuVS CAGRA — both at perfect recall on this metric. ("Pareto-optimal" here means: no measured baseline is simultaneously faster *and* better-recall on this contract; we make no claim about other latency–recall metrics.)
+- **Cosine ANN baselines collapse on this metric at scale**: the kids-ball corpus has tiny clusters (10 nodes per episode, 100 K episodes at 1M), so per-episode TEXT/AUDIO are buried among ~999 990 distractors. CAGRA's graph traversal (even at `search_k=512`) and IVF cells (any nprobe) miss them. MARS keeps episode membership in the graph topology and recovers them in O(member_count).
 
-**Episode-scoped retrieval** (when `query_episode_id` is known —
-embodied loops, AV per-track memory, voice-agent conversation): MARS
-restricts Stage 1 to episode members and skips BFS, producing a
-near-flat scaling curve at sub-200 µs across all corpus sizes (paired
-A100 probes, see `results/iteration_steps/vast_a100_paired_20260417/`):
+> **Synthetic-corpus disclaimer.** The kids-ball benchmark uses
+> Gaussian-perturbed cluster centroids in 768-D with a known, dense
+> small-cluster structure. Real-encoder embeddings (CLIP, CLAP, E5)
+> have different distance distributions and broader clusters; the
+> exact crossover N at which cosine ANN loses recall on real data
+> may shift. The qualitative point — that exhaustive cosine + episode
+> CSR is the right primitive when episodes are known and small —
+> should generalise; the absolute hit@15 numbers should not be quoted
+> without re-measurement on the target encoder. A real-encoder
+> validation run is the first item in §10.1 of the paper.
 
-| N | Global p99 | **Episode-scoped p99** | Speedup | Episode hit@15 |
-|---|-----------:|-----------------------:|:-------:|---------------:|
-| 10K  | 0.349 ms | **0.165 ms** | 2.1× | 0.83 → **1.00** |
-| 50K  | 0.462 ms | **0.172 ms** | 2.7× | 0.88 → **1.00** |
-| 100K | 0.551 ms | **0.174 ms** | 3.2× | 0.79 → **1.00** |
-| 1M   | 2.561 ms | **0.197 ms** | **13×** | 0.84 → **1.00** |
+> **What would be a fairer FAISS baseline.** A FAISS Flat-GPU sweep
+> with `IDSelectorBatch` or `IDSelectorRange` set to the episode
+> member ids would do roughly the same work as MARS Episode-scoped
+> and is the next baseline we should add. We did not run it for this
+> revision; it is queued in §10.1 of the paper.
 
 ![Episode-scoped scaling vs. competitors](paper/figures/fig_episode_scoped_scaling.png)
 
@@ -194,19 +236,35 @@ AR lambda=0.003 (5min), voice lambda=1e-4 (30min).
 | FAISS GPU Flat (cosine only) | 0.218 | 0.493 | 0.13 ms |
 | FAISS + post-hoc temporal filter | 0.910 | 0.000 | 0.25 ms |
 | **MARS** (native temporal decay) | **0.910** | **0.000** | **0.26 ms** |
-| Ring buffer + cuBLAS SGEMV | — | — | 0.12 ms |
+| Ring buffer + cuBLAS SGEMV (N=2,400) | — | — | 0.12 ms |
 
-MARS matches FAISS + post-hoc filter at identical latency (0.26 vs
-0.25 ms) while eliminating the filter code. A raw ring buffer is 3.2x
-faster (0.12 ms) but provides no temporal decay, cross-modal retrieval,
-or streaming insertion.
+MARS matches FAISS + post-hoc filter at identical TP@10 (0.910) and a
+comparable per-query latency (0.26 ms vs 0.25 ms p99). The 0.01 ms gap
+is within run-to-run noise on a non-locked-clock A100, so the
+contribution here is **API consolidation** — the temporal filter
+becomes a kernel parameter rather than a second pipeline stage —
+rather than a raw speedup. A raw cuBLAS-only ring buffer is 3.2× faster
+(0.12 ms at N=2,400, see ARCHITECTURE.md §5.6) but provides no
+temporal decay, cross-modal retrieval, or streaming insertion.
 
 ### Streaming insertion (60 Hz, 10 dets/frame)
 
-| System | Freshness Rate | Rebuild cost | Miss recent |
-|--------|---------------|-------------|-------------|
-| FAISS (rebuild/1s) | 6.8% | 9.0 ms/rebuild | 93.2% |
-| **MARS** (online) | **100%** | **0 ms** | **0%** |
+| System | Freshness | Per-frame cost | Notes |
+|--------|-----------|----------------|-------|
+| FAISS-Flat-GPU (per-frame `add()`) | **100 %** | ~10–20 µs/vec | Index supports streaming `add()`; ties MARS on freshness. |
+| FAISS-IVF-GPU (per-frame `add()`) | 100 % | µs/vec | Recall degrades over time without periodic re-train of cluster centroids. |
+| FAISS (rebuild every 1 s, batched workflow) | 6.8 % | 9.0 ms/rebuild | The strawman. Only relevant if the application chose to defer commits. |
+| **MARS** (online CSR append + incremental NSN edges) | **100 %** | < 5 µs/vec | Adds incremental cross-modal bridges so newly inserted nodes are immediately reachable from BFS, not just from the cosine sweep. |
+
+**Honest framing.** FAISS-Flat-GPU with per-frame `add()` is just as
+fresh as MARS — we acknowledge this. MARS's contribution on the
+streaming side is **API-level consolidation**: a single `insert()`
+call simultaneously updates the dense embedding matrix *and* the NSN
+graph topology (ring lattice, cross-modal bridges, episode CSR), so
+the BFS expansion path stays correct without an offline rebuild
+phase. This matters for embodied loops that depend on cross-modal
+reachability of recent inserts; it does not matter for pure cosine
+top-K, where FAISS-Flat is fine.
 
 ---
 
@@ -341,8 +399,9 @@ docs/                  Architecture, benchmarks, validation guides
 
 ```bibtex
 @misc{fratepietro2026mars,
-  title     = {{MARS}: A {GPU}-Resident Retrieval Substrate with
-               Native Temporal Decay for Real-Time Embodied {AI}},
+  title     = {{MARS}: Episode-Scoped {GPU} Retrieval for Real-Time
+               Embodied {AI}, with Native Temporal Decay and
+               Cross-Modal Bridges},
   author    = {Fratepietro, Antonello},
   year      = {2026},
   publisher = {Zenodo},

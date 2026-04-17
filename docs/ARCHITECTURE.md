@@ -1,14 +1,16 @@
 # Architecture Deep Dive
 
 This document explains the internal design of MARS: the CSR data layout,
-the Neural Shortcut Network topology, and the CUDA kernels that make up
-the retrieval pipeline.
+the Neural Shortcut Network topology, the **episode CSR member
+structure** that powers the episode-scoped fast path, and the CUDA
+kernels that make up the retrieval pipeline.
 
-This document
-describes the core architecture and the current
-pipeline. For a higher-level overview, start
-with the [README](../README.md). For the full academic treatment, see the
-[arXiv paper](../paper/main.pdf).
+This document describes the core architecture and the current
+pipeline. For a higher-level overview, start with the
+[README](../README.md). For the full academic treatment — including
+the §6.8 episode-scoped retrieval analysis, the §6.9 head-to-head
+against modern GPU ANN libraries, and the §10 evaluation hardening
+plan — see the [arXiv paper](../paper/main.pdf).
 
 ---
 
@@ -163,6 +165,7 @@ for (int32_t i = start + lane_id; i < end; i += 32) {
         // Propagate score with hop decay
         float parent_sc = bfs_score[node];
         float own_sim   = sim_scores[neighbor];
+        // delta_prop = hop_decay (default 0.85), alpha_bfs = 0.8
         bfs_score[neighbor] = fmaxf(parent_sc * hop_decay, own_sim * 0.8f);
 
         int32_t pos = atomicAdd(frontier_count, 1);
@@ -179,9 +182,16 @@ for (int32_t i = start + lane_id; i < end; i += 32) {
    exactly once, even when multiple warps race to visit it
 3. **Lock-free frontier construction**: `atomicAdd` gives each claimed
    neighbor a unique slot in `frontier_out`
-4. **Score propagation**: BFS score is the max of (parent score × hop decay)
-   and (own similarity × 0.8), so both proximity to seeds AND direct
-   similarity matter
+4. **Score propagation**: BFS score is the max of (parent score × δ_prop)
+   and (own similarity × α_bfs), so both proximity to seeds AND direct
+   similarity matter. Defaults: **δ_prop = 0.85** (per-hop attenuation
+   of the parent's relevance) and **α_bfs = 0.8** (cap on raw
+   similarity for purely-graph-discovered nodes — keeps BFS-only
+   neighbors from out-ranking direct cosine seeds). See paper
+   Algorithm 1 / "Score propagation parameters" for the rationale.
+   Note: temporal decay is **not** re-applied during BFS — it has
+   already been folded into `sim_scores[]` at Stage 1, so node `u`'s
+   own raw similarity already carries its age factor.
 
 The hop count and score arrays are recycled across waves — we just swap
 `frontier_in` and `frontier_out` pointers.

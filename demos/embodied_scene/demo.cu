@@ -49,7 +49,17 @@ int main(int argc, char** argv) {
     constexpr int32_t QUERY_CTX_MAX_K    = 64;  // device buffers (>= TOP_K)
 
     int32_t corpus_size = CORPUS_SIZE;
-    if (argc >= 2) corpus_size = std::atoi(argv[1]);
+    bool use_episode_scope = false;
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (std::strcmp(a, "--scope=episode") == 0 || std::strcmp(a, "--episode-scoped") == 0) {
+            use_episode_scope = true;
+        } else if (std::strcmp(a, "--scope=global") == 0) {
+            use_episode_scope = false;
+        } else if (a[0] != '-') {
+            corpus_size = std::atoi(a);
+        }
+    }
     if (corpus_size < 10) corpus_size = 10;
 
     DemoReport report;
@@ -93,8 +103,14 @@ int main(int argc, char** argv) {
     cfg.time_decay_lambda       = 8e-6f;
     cfg.bfs_score_decay         = 0.55f;
     cfg.modality_filter         = -1;
-    cfg.retrieval_scope         = RetrievalScope::Global;
-    cfg.episode_same_boost      = 0.24f;  // tuned via bench --boost-grid on A100 (see results/iteration_steps/vast_a100_refine3/)
+    cfg.retrieval_scope         = use_episode_scope ? RetrievalScope::EpisodeScoped
+                                                     : RetrievalScope::Global;
+    // Paired-probes A100 sweeps (results/iteration_steps/paired_wide_10k and
+    // .../paired_wide_1m) show no measurable hit-rate change for any boost in
+    // [0, 2.0] at this metric (kids-ball IMAGE -> same-episode TEXT+AUDIO),
+    // while the boost adds a small constant cost. Default to 0.0; keep the
+    // hook for downstream workloads where same-episode emphasis matters.
+    cfg.episode_same_boost      = 0.0f;
 
     std::mt19937 rng(914u);
     std::uniform_int_distribution<size_t> pick_img(0, image_nodes.size() - 1);
@@ -110,6 +126,16 @@ int main(int argc, char** argv) {
 
         const int32_t ep = corp.episode_ids[node];
         cfg.query_episode_id = ep;
+        if (use_episode_scope) {
+            cfg.query_episode_member_begin =
+                ep_csr.ep_csr_offsets[static_cast<size_t>(ep)];
+            cfg.query_episode_member_count =
+                ep_csr.ep_csr_offsets[static_cast<size_t>(ep) + 1u] -
+                ep_csr.ep_csr_offsets[static_cast<size_t>(ep)];
+        } else {
+            cfg.query_episode_member_begin = 0;
+            cfg.query_episode_member_count = 0;
+        }
 
         RetrievalStats stats;
         auto results = query_memory_fast(dg, ctx, qemb, qts, cfg, stats);

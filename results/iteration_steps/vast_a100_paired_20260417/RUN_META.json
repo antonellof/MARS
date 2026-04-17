@@ -1,0 +1,20 @@
+{
+  "host": "ssh5.vast.ai",
+  "ssh_port": 19293,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "driver": "565.57.01",
+  "cuda_runtime": "12.6",
+  "os": "Ubuntu 24.04.4 LTS",
+  "git_commit_base": "3b04e1ca851466429d4840152a548bb04b6a51eb",
+  "patch": "demos/embodied_scene/bench_kids_sweep.cu: paired-probe RNG fix (v1.3)",
+  "iterate_probes": {"n10k": 512, "n50k": 256, "n100k": 256, "n1m": 128},
+  "boost_grids": {
+    "n10k": "0.0,0.05,0.1,0.15,0.2,0.25,0.3,0.4,0.5,0.75,1.0,2.0",
+    "n50k": "0.0,0.1,0.2,0.3,0.5,1.0",
+    "n100k": "0.0,0.1,0.2,0.5",
+    "n1m": "0.0,0.1,0.2,0.3,0.5,1.0,2.0"
+  },
+  "criterion": "maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)",
+  "best_global_episode_same_boost": 0.0,
+  "note": "Paired-probes RNG; every boost in [0, 2.0] yields identical hit_top15 at all N (probe equivalence). Boost adds only ~0.005-0.015 ms wall_p99 with no recall change on the kids-ball IMAGE -> same-episode TEXT+AUDIO metric. Episode-scoped retrieval Pareto-dominates (faster + perfect recall) when query_episode_id is known."
+}

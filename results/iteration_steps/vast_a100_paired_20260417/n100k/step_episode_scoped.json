@@ -1,0 +1,14 @@
+{
+  "step": "episode_scoped_no_bfs",
+  "N": 100000,
+  "num_probes": 256,
+  "build_ms": 1979.976,
+  "wall_p99_ms": 0.1742,
+  "kernel_p99_ms": 0.1260,
+  "episode_cross_modal_hit_rate_compact": 1.000000,
+  "episode_cross_modal_hit_rate_top15": 1.000000,
+  "composite_score": 3.000000,
+  "ranking_score": 3.000000,
+  "iterate_wall_ms_penalty": 0.000000,
+  "note": "Different retrieval contract: rank within episode members only."
+}

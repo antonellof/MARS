@@ -2,6 +2,20 @@
 
 This folder holds **per-step JSON** plus **SUMMARY.{json,md}** from a single `bench_kids_sweep` invocation.
 
+> **Status (Apr 2026, paired-probes re-tune):** the
+> [`vast_a100_paired_20260417`](vast_a100_paired_20260417/) run uses a
+> **paired** probe sample across all boost values
+> (`bench_kids_sweep.cu` v1.3) and shows that on the kids-ball metric
+> `episode_same_boost` is **flat across `[0.0, 2.0]` at every N**
+> (10k/50k/100k/1M). Previous "0.24/0.245 wins" runs were measuring
+> probe-sampling noise (each boost row ran on a different probe set).
+> The demo default is now **`0.0`** and the demo gained a
+> `--scope=episode` toggle that uses
+> `RetrievalScope::EpisodeScoped` — strictly Pareto-better when
+> `query_episode_id` is known (e.g. **13× faster + perfect hit rate at
+> N = 1M**). Earlier "best boost" runs below are kept for provenance
+> but should be read as historical, not current recommendations.
+
 ## Command
 
 ```bash
@@ -71,7 +85,7 @@ make bench-kids-vram-max-smoke
 ## Applying the winner
 
 1. Open `SUMMARY.md` and note `best_global_episode_same_boost`.
-2. Set the same value in [`demos/embodied_scene/demo.cu`](../../demos/embodied_scene/demo.cu) as `cfg.episode_same_boost`.
+2. Set the same value in [`demos/embodied_scene/demo.cu`](../../demos/embodied_scene/demo.cu) as `cfg.episode_same_boost`. Note: the paired-probes run (`vast_a100_paired_20260417`) shows the metric is flat in this parameter on the kids-ball corpus, so **`0.0` is the current default**; only revisit if you have a workload where same-episode emphasis demonstrably helps.
 
 Re-run the full multi-N sweep when you change defaults:
 
@@ -90,3 +104,4 @@ Re-run the full multi-N sweep when you change defaults:
 | [vast_a100_1m_micro_20260415](vast_a100_1m_micro_20260415/) | A100-SXM4-40GB | **N=1M**, same micro grid, **128** probes/boost: best **0.245** (scale/probe variance vs 10k); wall p99 ~**2.5 ms** global. |
 | [vast_a100_ssh5_20260417_10k](vast_a100_ssh5_20260417_10k/) | A100-SXM4-40GB (CUDA 12.6, Ubuntu 24.04) | Reconfirmation 10k micro grid: best **0.240** (composite **2.7266**). |
 | [vast_a100_ssh5_20260417_1m](vast_a100_ssh5_20260417_1m/) | A100-SXM4-40GB (CUDA 12.6, Ubuntu 24.04) | Reconfirmation 1M micro grid: best **0.245** (composite **2.7656**). |
+| [vast_a100_paired_20260417](vast_a100_paired_20260417/) | A100-SXM4-40GB (CUDA 12.6, Ubuntu 24.04) | **Paired-probes** v1.3 sweeps at N=10k/50k/100k/1M plus multi-N. Boost flat across `[0,2]`; episode-scoped 2.1×–13× faster with hit rate 1.0. **Supersedes earlier boost-tuning conclusions.** See [`SUMMARY.md`](vast_a100_paired_20260417/SUMMARY.md). |

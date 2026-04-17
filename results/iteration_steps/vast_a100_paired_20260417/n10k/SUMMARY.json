@@ -1,0 +1,31 @@
+{
+  "tool": "mars-kids-boost-iterate",
+  "version": "1.3",
+  "iterate_n": 10000,
+  "iterate_probes": 512,
+  "corpus_seed": 2026,
+  "criterion": "maximize composite_score = 2*hit_top15 + hit_compact (global boosts only)",
+  "iterate_wall_ms_penalty": 0.000000,
+  "best_global_episode_same_boost": 0.050000,
+  "best_global_composite_score": 2.632812,
+  "best_global_ranking_score": 2.632812,
+  "best_global_step_file": "results/iteration_steps/paired_wide_10k/step_global_boost_50.json",
+  "episode_scoped_composite_score": 3.000000,
+  "episode_scoped_wall_p99_ms": 0.1647,
+  "episode_scoped_step_file": "results/iteration_steps/paired_wide_10k/step_episode_scoped.json",
+  "steps": [
+    {"boost":0.000000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_0.json","composite_score":2.630859,"ranking_score":2.630859,"wall_p99_ms":0.3485,"hit_top15":0.826172,"hit_compact":0.978516},
+    {"boost":0.050000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_50.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":0.3331,"hit_top15":0.826172,"hit_compact":0.980469},
+    {"boost":0.100000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_100.json","composite_score":2.630859,"ranking_score":2.630859,"wall_p99_ms":0.2951,"hit_top15":0.826172,"hit_compact":0.978516},
+    {"boost":0.150000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_150.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":0.2824,"hit_top15":0.826172,"hit_compact":0.980469},
+    {"boost":0.200000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_200.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":0.2817,"hit_top15":0.826172,"hit_compact":0.980469},
+    {"boost":0.250000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_250.json","composite_score":2.630859,"ranking_score":2.630859,"wall_p99_ms":0.2810,"hit_top15":0.826172,"hit_compact":0.978516},
+    {"boost":0.300000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_300.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":0.2906,"hit_top15":0.826172,"hit_compact":0.980469},
+    {"boost":0.400000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_400.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":0.2921,"hit_top15":0.826172,"hit_compact":0.980469},
+    {"boost":0.500000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_500.json","composite_score":2.630859,"ranking_score":2.630859,"wall_p99_ms":0.2850,"hit_top15":0.826172,"hit_compact":0.978516},
+    {"boost":0.750000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_750.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":0.2867,"hit_top15":0.826172,"hit_compact":0.980469},
+    {"boost":1.000000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_1000.json","composite_score":2.632812,"ranking_score":2.632812,"wall_p99_ms":0.2807,"hit_top15":0.826172,"hit_compact":0.980469},
+    {"boost":2.000000,"file":"results/iteration_steps/paired_wide_10k/step_global_boost_2000.json","composite_score":2.630859,"ranking_score":2.630859,"wall_p99_ms":0.2824,"hit_top15":0.826172,"hit_compact":0.978516},
+    {"boost":-1.000000,"file":"results/iteration_steps/paired_wide_10k/step_episode_scoped.json","composite_score":3.000000,"ranking_score":3.000000,"wall_p99_ms":0.1647,"hit_top15":1.000000,"hit_compact":1.000000}
+  ]
+}

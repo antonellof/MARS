@@ -194,7 +194,8 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         cfg.query_episode_member_begin = 0;
         cfg.query_episode_member_count = 0;
 
-        std::mt19937 rng(uint32_t(grid_n) ^ (uint32_t)(boost * 10000.f) ^ 0xB00Bu);
+        // SAME probe sample across boosts for paired comparison at a given N.
+        std::mt19937 rng(uint32_t(grid_n) ^ 0xB00Bu);
         std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
         std::vector<double> wall_ms, kern_ms;
         wall_ms.reserve(size_t(grid_probes));
@@ -278,7 +279,8 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
         cfg.retrieval_scope      = RetrievalScope::EpisodeScoped;
         cfg.episode_same_boost   = 0.0f;
 
-        std::mt19937 rng(uint32_t(grid_n) ^ 0x5C0DC0Du);
+        // SAME probe sample as the global boost loop so episode-scoped is paired.
+        std::mt19937 rng(uint32_t(grid_n) ^ 0xB00Bu);
         std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
         std::vector<double> wall_ms, kern_ms;
         wall_ms.reserve(size_t(grid_probes));
@@ -382,7 +384,7 @@ int run_boost_iterate_mode(const std::vector<float>& boosts, int32_t grid_n, int
     }
     std::fprintf(fs, "{\n");
     std::fprintf(fs, "  \"tool\": \"mars-kids-boost-iterate\",\n");
-    std::fprintf(fs, "  \"version\": \"1.2\",\n");
+    std::fprintf(fs, "  \"version\": \"1.3\",\n");
     std::fprintf(fs, "  \"iterate_n\": %d,\n", grid_n);
     std::fprintf(fs, "  \"iterate_probes\": %d,\n", grid_probes);
     std::fprintf(fs, "  \"corpus_seed\": %u,\n", corpus_seed);
@@ -587,7 +589,8 @@ int main(int argc, char** argv) {
             cfg.retrieval_scope      = bv.scope;
             cfg.episode_same_boost   = bv.episode_same_boost;
 
-            std::mt19937 rng(uint32_t(N) ^ uint32_t(vi) ^ 0xA5A5A5A5u);
+            // SAME probe sample across variants for paired comparison at a given N.
+            std::mt19937 rng(uint32_t(N) ^ 0xA5A5A5A5u);
             std::uniform_int_distribution<size_t> pick(0, image_nodes.size() - 1);
 
             std::vector<double> wall_ms;
@@ -662,10 +665,11 @@ int main(int argc, char** argv) {
     }
     std::fprintf(fo, "{\n");
     std::fprintf(fo, "  \"tool\": \"mars-kids-ball-sweep\",\n");
-    std::fprintf(fo, "  \"version\": \"1.2\",\n");
+    std::fprintf(fo, "  \"version\": \"1.3\",\n");
     std::fprintf(fo, "  \"note\": \"Multiple retrieval variants per N for vast.ai matrix. "
                      "episode_scoped = similarity+decay over episode members only, BFS hops 0. "
                      "global_episode_boost = same-episode score multiplier before top-K. "
+                     "v1.3: probe sample is the same across variants at a given N (paired comparison). "
                      "See docs/MEMORY_LAYOUT_EMBODIED.md, TEMPORAL_HIERARCHY.md, MULTIMODAL_ROUTING.md.\",\n");
     std::fprintf(fo, "  \"embedding_dim\": %d,\n", DIM);
     std::fprintf(fo, "  \"top_k\": %d,\n", TOP_K);

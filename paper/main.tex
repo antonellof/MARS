@@ -31,6 +31,16 @@
 \usepackage{listings}
 \usepackage{microtype}
 \usepackage{url}
+
+% ─── Line-breaking tolerance ─────────────────────────────────────────
+% Long \texttt{} identifiers (CUDA API names, FAISS class names, file
+% paths) often prevent normal line breaking. Give TeX more emergency
+% stretch and silence noisy warnings.
+\setlength{\emergencystretch}{3em}
+\sloppy
+\hbadness=10000
+\tolerance=2000
+\Urlmuskip=0mu plus 2mu\relax
 \usepackage{tcolorbox}
 \usepackage{pifont}
 \usepackage{algorithm}
@@ -1019,15 +1029,15 @@ peak; the achieved fraction during cuBLAS \texttt{Sgemv} is
 60--75\,\% on all three. CUDA versions and driver branches are the
 ones used at measurement time on the rented or local machine.}
 \label{tab:hwindex}
-\begin{tabular}{lllrll}
+\begin{tabular}{@{}llcrll@{}}
 \toprule
-\textbf{Abbrev.} & \textbf{Card} & \textbf{Form factor} &
-\textbf{HBM/GDDR (GB)} & \textbf{Peak BW} & \textbf{CUDA} \\
+\textbf{Abbrev.} & \textbf{Card} & \textbf{Form} &
+\textbf{Mem (GB)} & \textbf{Peak BW} & \textbf{CUDA} \\
 \midrule
-A100~SXM4 (80) & A100~80GB SXM4 & Datacenter & 80  & 2.0~TB/s & 12.6 \\
-A100~SXM4 (40) & A100~40GB SXM4 & Datacenter & 40  & 1.5~TB/s & 12.6 \\
-A100~PCIE      & A100~40GB PCIe & Datacenter & 40  & 1.5~TB/s & 12.6 \\
-RTX~5060~Ti    & RTX 5060 Ti 16GB (Blackwell sm\_120) & Consumer & 16 & ${\sim}448$~GB/s GDDR7 & 13.0 \\
+A100~SXM4 (80) & A100 SXM4         & DC       & 80 & 2.0~TB/s   & 12.6 \\
+A100~SXM4 (40) & A100 SXM4         & DC       & 40 & 1.5~TB/s   & 12.6 \\
+A100~PCIE      & A100 PCIe         & DC       & 40 & 1.5~TB/s   & 12.6 \\
+RTX~5060~Ti    & RTX 5060 Ti (Blackwell) & Consumer & 16 & 0.45~TB/s  & 13.0 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1668,15 +1678,18 @@ hardware, the same kids-ball corpora, and an aligned
 \texttt{results/competitors\_20260417/SUMMARY.md} (commit
 \texttt{58b4626}+).
 
-\textbf{Baselines.} (i) FAISS-GPU 1.14.1 \texttt{IndexFlatIP} (exact
-exhaustive cosine; \texttt{cu12} build that includes the SIVF
-streaming work merged in March~2026). (ii) FAISS-GPU 1.14.1
-\texttt{IndexIVFFlat} with $n_{\text{list}}=\sqrt{N}$ and
-$n_{\text{probe}}=64$. (iii) cuVS CAGRA 26.04 (graph-based ANN with
-\texttt{graph\_degree}=64, \texttt{intermediate\_graph\_degree}=128,
-\texttt{itopk\_size}=128, \texttt{algo}=\texttt{single\_cta} for
-batch-1 latency; this version exposes the
-\texttt{cagra::extend()} streaming op).
+\textbf{Baselines.}
+(i) FAISS-GPU 1.14.1 \texttt{IndexFlatIP} --- exact exhaustive
+cosine; \texttt{cu12} build that includes the SIVF streaming work
+merged in March~2026.
+(ii) FAISS-GPU 1.14.1 \texttt{IndexIVFFlat} with
+$n_{\text{list}}{=}\sqrt{N}$ and $n_{\text{probe}}{=}64$.
+(iii) cuVS CAGRA 26.04 (graph-based ANN), with
+\texttt{graph\_degree}{=}64,
+\texttt{intermediate\_graph\_degree}{=}128,
+\texttt{itopk\_size}{=}128, and
+\texttt{algo}{=}\texttt{single\_cta} for batch-1 latency. This
+version exposes the \texttt{cagra::extend()} streaming op.
 
 \paragraph{What \emph{would} be a fairer baseline (and why we don't
 report it as such).} A reader familiar with FAISS will rightly note
